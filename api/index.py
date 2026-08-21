@@ -327,23 +327,30 @@ async def resend_user_invite(target_user_id: str, admin_user: dict = Depends(get
     redirect_url = f"{site_url}/auth/callback?next=/set-password"
     
     try:
-        invite_res = admin.auth.admin.invite_user_by_email(
-            email,
-            options={
-                "data": {"name": name, "role": "user", "status": "invited"},
-                "redirect_to": redirect_url
-            }
-        )
+        try:
+            invite_res = admin.auth.admin.invite_user_by_email(
+                email,
+                options={
+                    "data": {"name": name, "role": "user", "status": "invited"},
+                    "redirect_to": redirect_url
+                }
+            )
+        except Exception as invite_err:
+            # If user already registered/confirmed in auth.users, send password setup/recovery link
+            admin.auth.reset_password_for_email(
+                email,
+                options={"redirect_to": redirect_url}
+            )
         
         admin.table("profiles").update({"status": "invited"}).eq("id", target_user_id).execute()
         
         return {
             "status": "success",
             "email": email,
-            "message": f"Activation link has been resent to {email}."
+            "message": f"Password setup activation link has been resent to {email}."
         }
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to resend invite: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to resend activation link: {str(e)}")
 
 @app.patch("/api/admin/users/{target_user_id}")
 async def update_user_status(

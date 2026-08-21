@@ -16,10 +16,10 @@ from api.services.supabase_client import (
     create_signed_download_url
 )
 from api.services.parser import extract_text_from_file
-from api.services.gemini_service import generate_cv_suggestions
+from api.services.gemini_service import generate_cv_suggestions, fallback_keyword_extractor
 from api.services.pdf_generator import generate_tailored_pdf
 
-app = FastAPI(title="CV Tailor API", version="2.1.0")
+app = FastAPI(title="CV Tailor API", version="2.2.0")
 
 # Enable CORS for Next.js frontend
 app.add_middleware(
@@ -30,10 +30,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Root admin email fallback
 ADMIN_EMAIL = "isnan.rizqikurniawan@gmail.com"
 
-# Dependency for authenticating user from Supabase Bearer token
 def get_current_user(authorization: Optional[str] = Header(None)) -> dict:
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(
@@ -59,7 +57,6 @@ def get_current_user(authorization: Optional[str] = Header(None)) -> dict:
             detail=f"Authentication failed: {str(e)}"
         )
 
-# Dependency for Admin authorization
 def get_admin_user(current_user: dict = Depends(get_current_user)) -> dict:
     admin = get_supabase_admin()
     try:
@@ -69,7 +66,6 @@ def get_admin_user(current_user: dict = Depends(get_current_user)) -> dict:
     except Exception:
         pass
     
-    # Root admin email fallback
     if current_user.get("email") == ADMIN_EMAIL:
         return current_user
         
@@ -78,7 +74,6 @@ def get_admin_user(current_user: dict = Depends(get_current_user)) -> dict:
         detail="Administrator access required."
     )
 
-# Pydantic Request Models
 class CreateApplicationRequest(BaseModel):
     cv_document_id: str
     job_title: str
@@ -104,7 +99,7 @@ class UpdateUserPayload(BaseModel):
 
 @app.get("/api/health")
 def health_check():
-    return {"status": "ok", "app": "CV Tailor API", "version": "2.1.0"}
+    return {"status": "ok", "app": "CV Tailor API", "version": "2.2.0"}
 
 # ==========================================
 # PUBLIC: Access Requests
@@ -146,7 +141,6 @@ async def submit_access_request(payload: AccessRequestPayload):
 @app.get("/api/admin/stats")
 async def get_admin_stats(admin_user: dict = Depends(get_admin_user)):
     admin = get_supabase_admin()
-    
     try:
         profiles_res = admin.table("profiles").select("id, status, terms_agreed", count="exact").execute()
         total_users = profiles_res.count if profiles_res.count is not None else len(profiles_res.data or [])
@@ -631,7 +625,7 @@ async def generate_cv(
             "storage_path": storage_path
         }).execute()
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Database record insertion failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Database insertion failed: {str(e)}")
         
     try:
         download_url = create_signed_download_url("generated", storage_path, expires_in=3600)
@@ -660,6 +654,35 @@ async def get_application_details(
         
     app_data = app_res.data[0]
     
+    # Retrieve keywords analysis or generate fallback if not yet populated
+    keywords_analysis = app_data.get("keywords_analysis") or []
+    if not keywords_analysis:
+        cv_doc = app_data.get("cv_documents") or {}
+        cv_text = cv_doc.get("parsed_text", "")
+        job_title = app_data.get("job_title", "")
+        job_description = app_data.get("job_description_text", "")
+        fallback_keywords = fallback_keyword_extractor(cv_text, job_title, job_description)
+        keywords_analysis = [k.model_dump() for k in fallback_keywords]
+        
+    # Retrieve match score and label or compute reasonable defaults if not yet populated
+    match_score = app_data.get("match_score")
+    match_label = app_data.get("match_label")
+    match_summary = app_data.get("match_summary")
+    
+    if match_score is None:
+        if keywords_analysis:
+            exists_cnt = sum(1 for k in keywords_analysis if k.get("status") == "exists")
+            diff_cnt = sum(1 for k in keywords_analysis if k.get("status") == "different_terms")
+            total = max(1, len(keywords_analysis))
+            calculated_score = int(((exists_cnt * 1.0 + diff_cnt * 0.6) / total) * 100)
+            match_score = max(50, min(95, calculated_score))
+            match_label = "Strong Match" if match_score >= 80 else "Moderate Match" if match_score >= 60 else "Low Match"
+            match_summary = "Evaluated based on detected core skills, frameworks, and domain experience from the job vacancy."
+        else:
+            match_score = 75
+            match_label = "Moderate Match"
+            match_summary = "Candidate demonstrates solid foundational capabilities with opportunities for keyword alignment."
+            
     changes_res = admin.table("suggested_changes").select("*").eq("application_id", application_id).order("created_at").execute()
     gen_res = admin.table("generated_cvs").select("*").eq("application_id", application_id).order("created_at", desc=True).execute()
     
@@ -672,10 +695,10 @@ async def get_application_details(
 
     return {
         "application": app_data,
-        "match_score": app_data.get("match_score"),
-        "match_label": app_data.get("match_label"),
-        "match_summary": app_data.get("match_summary"),
-        "keywords_analysis": app_data.get("keywords_analysis") or [],
+        "match_score": match_score,
+        "match_label": match_label,
+        "match_summary": match_summary,
+        "keywords_analysis": keywords_analysis,
         "suggested_changes": changes_res.data or [],
         "generated_cvs": generated_cvs
     }

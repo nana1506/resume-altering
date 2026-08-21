@@ -5,7 +5,7 @@ import sys
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from api.services.pdf_generator import generate_tailored_pdf, apply_changes_to_text
-from api.services.gemini_service import GeminiAnalysisResponse, clean_json_string
+from api.services.gemini_service import GeminiAnalysisResponse, clean_json_string, fallback_keyword_extractor
 
 def test_pdf_generation():
     print("Testing PDF Generation...")
@@ -96,7 +96,8 @@ def test_gemini_json_parsing():
 ```"""
     cleaned = clean_json_string(sample_raw_json)
     import json
-    parsed = GeminiAnalysisResponse(**json.loads(cleaned))
+    raw_dict = json.loads(cleaned)
+    parsed = GeminiAnalysisResponse(**raw_dict)
     assert parsed.match_score == 82
     assert parsed.match_label == "Strong Match"
     assert len(parsed.keywords) == 3
@@ -106,7 +107,22 @@ def test_gemini_json_parsing():
     assert len(parsed.suggestions) == 1
     print("Gemini response parsing verified successfully!")
 
+def test_fallback_keyword_extractor():
+    print("Testing Fallback Keyword Extractor...")
+    cv = "Software Engineer with React, TypeScript, Git and REST API experience."
+    job_title = "Senior Full-Stack Engineer (Python / Next.js)"
+    job_desc = "We are seeking a Senior Full-Stack Engineer proficient with Python, FastAPI, PostgreSQL, Docker, and AWS."
+    
+    extracted = fallback_keyword_extractor(cv, job_title, job_desc)
+    assert len(extracted) >= 4, f"Expected multiple keywords, got {len(extracted)}"
+    terms = [k.keyword for k in extracted]
+    assert "Python" in terms
+    assert "Docker" in terms
+    assert "PostgreSQL" in terms
+    print(f"Extracted {len(extracted)} keywords reliably: {terms}")
+
 if __name__ == "__main__":
     test_pdf_generation()
     test_gemini_json_parsing()
+    test_fallback_keyword_extractor()
     print("All service unit tests passed!")

@@ -55,7 +55,7 @@ INSTRUCTIONS:
 2. Suggest precise, high-impact, section-by-section edits or additions (e.g. in 'Summary', 'Skills', 'Experience - [Company/Role]', 'Projects', 'Education').
 3. DO NOT rewrite the entire CV. Only suggest specific, actionable changes (replace vague bullets with quantifiable/keyword-rich statements, add missing core skills, sharpen summary).
 4. For each suggestion:
-   - "section": Name of the section (e.g., "Professional Summary", "Skills", "Experience - Software Engineer at Acme").
+   - "section": Name of the section (e.g., "Summary", "Skills", "Experience - Software Engineer at Acme").
    - "original_text": Verbatim excerpt from the CV to replace, or empty string "" if this is a newly added bullet point.
    - "suggested_text": The exact new text or revised bullet point with active action verbs and keywords.
    - "reason": Clear rationale linking this change directly to a requirement in the job description.
@@ -73,29 +73,33 @@ You MUST return ONLY valid JSON matching this schema:
 }}
 """
 
-    # Attempt calling Gemini using google.generativeai
-    try:
-        import google.generativeai as genai
-        genai.configure(api_key=api_key)
-        
-        # Prefer fast & reliable models
-        model = genai.GenerativeModel(
-            model_name="gemini-1.5-flash",
-            generation_config={"response_mime_type": "application/json"}
-        )
-        response = model.generate_content(prompt)
-        raw_text = response.text
-        cleaned_json = clean_json_string(raw_text)
-        data = json.loads(cleaned_json)
-        parsed = GeminiSuggestionsResponse(**data)
-        return parsed.suggestions
-    except Exception as first_err:
-        # Fallback / Retry with strict prompt reminder if parsing failed
+    import google.generativeai as genai
+    genai.configure(api_key=api_key)
+
+    candidate_models = ["gemini-2.5-flash", "gemini-flash-latest", "gemini-2.5-flash-lite", "gemini-3-flash-preview"]
+    
+    last_error = None
+    for model_name in candidate_models:
         try:
-            import google.generativeai as genai
-            genai.configure(api_key=api_key)
-            model = genai.GenerativeModel(model_name="gemini-1.5-flash")
-            retry_prompt = prompt + "\n\nCRITICAL RETRY NOTICE: The previous output failed JSON validation. Output pure, valid JSON ONLY. Start with { and end with }."
+            model = genai.GenerativeModel(
+                model_name=model_name,
+                generation_config={"response_mime_type": "application/json"}
+            )
+            response = model.generate_content(prompt)
+            raw_text = response.text
+            cleaned_json = clean_json_string(raw_text)
+            data = json.loads(cleaned_json)
+            parsed = GeminiSuggestionsResponse(**data)
+            return parsed.suggestions
+        except Exception as err:
+            last_error = err
+            continue
+
+    # Fallback retry with raw text prompt if strict mime-type failed
+    for model_name in candidate_models:
+        try:
+            model = genai.GenerativeModel(model_name=model_name)
+            retry_prompt = prompt + "\n\nCRITICAL RETRY: Return ONLY valid JSON format. Start with { and end with }."
             response = model.generate_content(retry_prompt)
             raw_text = response.text
             cleaned_json = clean_json_string(raw_text)
@@ -103,4 +107,7 @@ You MUST return ONLY valid JSON matching this schema:
             parsed = GeminiSuggestionsResponse(**data)
             return parsed.suggestions
         except Exception as retry_err:
-            raise RuntimeError(f"Failed to generate and parse Gemini CV suggestions: {str(retry_err)} (Initial error: {str(first_err)})")
+            last_error = retry_err
+            continue
+
+    raise RuntimeError(f"Failed to generate and parse Gemini CV suggestions: {str(last_error)}")

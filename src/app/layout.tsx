@@ -23,7 +23,7 @@ export default function RootLayout({
           {children}
         </main>
         <footer className="border-t border-slate-200 bg-white/70 py-6 text-center text-xs text-slate-500">
-          <p>© {new Date().getFullYear()} CV Tailor. Powered by Google Gemini & Supabase.</p>
+          <p>© {new Date().getFullYear()} CV Tailor. Powered by Google Gemini AI.</p>
         </footer>
       </body>
     </html>

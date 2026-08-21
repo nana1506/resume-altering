@@ -381,6 +381,16 @@ async def delete_user(target_user_id: str, admin_user: dict = Depends(get_admin_
 # USER PROFILE & TERMS AGREEMENT
 # ==========================================
 
+class UpdateUserProfilePayload(BaseModel):
+    name: Optional[str] = None
+    headline: Optional[str] = None
+    phone: Optional[str] = None
+    location: Optional[str] = None
+    linkedin_url: Optional[str] = None
+    github_url: Optional[str] = None
+    portfolio_url: Optional[str] = None
+    bio: Optional[str] = None
+
 @app.get("/api/user/profile")
 async def get_user_profile(current_user: dict = Depends(get_current_user)):
     admin = get_supabase_admin()
@@ -406,6 +416,46 @@ async def get_user_profile(current_user: dict = Depends(get_current_user)):
             "terms_agreed": False,
             "status": "active"
         }
+
+@app.patch("/api/user/profile")
+async def update_user_profile(
+    payload: UpdateUserProfilePayload,
+    current_user: dict = Depends(get_current_user)
+):
+    admin = get_supabase_admin()
+    user_id = current_user["id"]
+    
+    update_data = {}
+    if payload.name is not None:
+        update_data["name"] = payload.name.strip()
+    if payload.headline is not None:
+        update_data["headline"] = payload.headline.strip()
+    if payload.phone is not None:
+        update_data["phone"] = payload.phone.strip()
+    if payload.location is not None:
+        update_data["location"] = payload.location.strip()
+    if payload.linkedin_url is not None:
+        update_data["linkedin_url"] = payload.linkedin_url.strip()
+    if payload.github_url is not None:
+        update_data["github_url"] = payload.github_url.strip()
+    if payload.portfolio_url is not None:
+        update_data["portfolio_url"] = payload.portfolio_url.strip()
+    if payload.bio is not None:
+        update_data["bio"] = payload.bio.strip()
+        
+    # NOTE: User can edit anything, except their email or role/status
+    if not update_data:
+        return {"status": "noop"}
+        
+    try:
+        res = admin.table("profiles").update(update_data).eq("id", user_id).execute()
+        return {
+            "status": "success",
+            "message": "Personal profile updated successfully.",
+            "profile": res.data[0] if res.data else update_data
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to update profile: {str(e)}")
 
 @app.post("/api/user/accept-terms")
 async def accept_terms(current_user: dict = Depends(get_current_user)):

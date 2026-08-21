@@ -26,7 +26,10 @@ import {
   Check, 
   Mail, 
   Filter,
-  ArrowRight
+  ArrowRight,
+  Copy,
+  Link as LinkIcon,
+  ExternalLink
 } from 'lucide-react';
 
 interface AccessRequest {
@@ -68,6 +71,10 @@ export default function AdminDashboardPage() {
   const [searchQuery, setSearchQuery] = useState('');
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [actionSuccessMsg, setActionSuccessMsg] = useState<string | null>(null);
+
+  // Direct Link Modal
+  const [copiedLink, setCopiedLink] = useState(false);
+  const [directLinkModalData, setDirectLinkModalData] = useState<{ email: string; link: string } | null>(null);
 
   // Invite Modal
   const [isInviteModalOpen, setIsInviteModalOpen] = useState(false);
@@ -120,7 +127,10 @@ export default function AdminDashboardPage() {
       const res = await fetchWithAuth(`/api/admin/requests/${requestId}/approve`, {
         method: 'POST',
       });
-      setActionSuccessMsg(res.message || 'Access request approved and invite link sent!');
+      setActionSuccessMsg(res.message || 'Access request approved!');
+      if (res.direct_link) {
+        setDirectLinkModalData({ email: res.email, link: res.direct_link });
+      }
       loadAdminData();
       setTimeout(() => setActionSuccessMsg(null), 4000);
     } catch (err: any) {
@@ -148,7 +158,10 @@ export default function AdminDashboardPage() {
       const res = await fetchWithAuth(`/api/admin/users/${userId}/resend-invite`, {
         method: 'POST',
       });
-      setActionSuccessMsg(res.message || `Activation link resent to ${userEmail}!`);
+      setActionSuccessMsg(res.message || `Password setup link generated for ${userEmail}!`);
+      if (res.direct_link) {
+        setDirectLinkModalData({ email: userEmail, link: res.direct_link });
+      }
       loadAdminData();
       setTimeout(() => setActionSuccessMsg(null), 4000);
     } catch (err: any) {
@@ -164,7 +177,7 @@ export default function AdminDashboardPage() {
     setInviteSuccessMsg(null);
 
     try {
-      await fetchWithAuth('/api/admin/invite', {
+      const res = await fetchWithAuth('/api/admin/invite', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -173,19 +186,28 @@ export default function AdminDashboardPage() {
         }),
       });
 
-      setInviteSuccessMsg(`Invitation sent to ${inviteEmail}!`);
+      setInviteSuccessMsg(`Invitation registered for ${inviteEmail}!`);
+      if (res.direct_link) {
+        setDirectLinkModalData({ email: inviteEmail.trim(), link: res.direct_link });
+      }
       setInviteName('');
       setInviteEmail('');
       loadAdminData();
       setTimeout(() => {
         setIsInviteModalOpen(false);
         setInviteSuccessMsg(null);
-      }, 2000);
+      }, 1500);
     } catch (err: any) {
       alert(err.message || 'Failed to send invite.');
     } finally {
       setIsInviting(false);
     }
+  };
+
+  const copyDirectLinkToClipboard = (link: string) => {
+    navigator.clipboard.writeText(link);
+    setCopiedLink(true);
+    setTimeout(() => setCopiedLink(false), 2500);
   };
 
   const handleDeleteUser = async (userId: string, userEmail: string) => {
@@ -440,7 +462,7 @@ export default function AdminDashboardPage() {
                                   className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold shadow-sm transition-colors flex items-center gap-1"
                                 >
                                   <Send className="w-3 h-3" />
-                                  <span>Approve & Send Invite</span>
+                                  <span>Approve & Invite</span>
                                 </button>
                                 <button
                                   onClick={() => handleRejectRequest(req.id)}
@@ -453,7 +475,7 @@ export default function AdminDashboardPage() {
                               <button
                                 onClick={() => handleApproveRequest(req.id)}
                                 className="px-2.5 py-1 rounded-lg text-xs font-semibold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200/60 inline-flex items-center gap-1"
-                                title="Resend invitation link email"
+                                title="Resend invitation link or get setup link"
                               >
                                 <Send className="w-3 h-3" />
                                 <span>Resend Invite</span>
@@ -668,7 +690,7 @@ export default function AdminDashboardPage() {
                 {isInviting ? (
                   <>
                     <Loader2 className="w-4 h-4 animate-spin" />
-                    <span>Sending Invite...</span>
+                    <span>Processing Invite...</span>
                   </>
                 ) : (
                   <>
@@ -678,6 +700,75 @@ export default function AdminDashboardPage() {
                 )}
               </button>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Direct Setup Link Modal (Bypasses email rate limit) */}
+      {directLinkModalData && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
+          <div className="bg-white border border-slate-200 rounded-3xl p-6 sm:p-8 max-w-lg w-full shadow-2xl space-y-6">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <div className="w-10 h-10 rounded-xl bg-emerald-50 text-emerald-700 flex items-center justify-center">
+                  <LinkIcon className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-slate-900 text-lg">Direct Activation Link</h3>
+                  <p className="text-xs text-slate-500">For {directLinkModalData.email}</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setDirectLinkModalData(null)}
+                className="text-slate-400 hover:text-slate-600 text-xl font-bold"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="p-4 rounded-2xl bg-amber-50 border border-amber-200 text-amber-800 text-xs leading-relaxed space-y-1">
+              <p className="font-bold flex items-center gap-1">
+                <span>⚡ Direct Setup Link Generated</span>
+              </p>
+              <p>
+                If Supabase free tier email rate limits are reached, you can directly copy this link and send it to the candidate via Slack, WhatsApp, or private message.
+              </p>
+            </div>
+
+            <div className="space-y-2">
+              <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider">
+                Direct Password Setup URL
+              </label>
+              <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-600 font-mono break-all max-h-24 overflow-y-auto select-all">
+                {directLinkModalData.link}
+              </div>
+            </div>
+
+            <div className="flex items-center gap-3">
+              <button
+                onClick={() => copyDirectLinkToClipboard(directLinkModalData.link)}
+                className="flex-1 py-2.5 px-4 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-xs shadow-md shadow-indigo-500/25 transition-all flex items-center justify-center gap-2"
+              >
+                {copiedLink ? (
+                  <>
+                    <Check className="w-4 h-4 text-emerald-300" />
+                    <span>Copied Link to Clipboard!</span>
+                  </>
+                ) : (
+                  <>
+                    <Copy className="w-4 h-4" />
+                    <span>Copy Setup Link</span>
+                  </>
+                )}
+              </button>
+
+              <button
+                onClick={() => setDirectLinkModalData(null)}
+                className="py-2.5 px-4 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-medium text-xs transition-colors"
+              >
+                Close
+              </button>
+            </div>
           </div>
         </div>
       )}

@@ -19,7 +19,7 @@ from api.services.parser import extract_text_from_file
 from api.services.gemini_service import generate_cv_suggestions, fallback_keyword_extractor
 from api.services.pdf_generator import generate_tailored_pdf
 
-app = FastAPI(title="CV Tailor API", version="2.2.0")
+app = FastAPI(title="CV Tailor API", version="2.3.0")
 
 # Enable CORS for Next.js frontend
 app.add_middleware(
@@ -74,6 +74,19 @@ def get_admin_user(current_user: dict = Depends(get_current_user)) -> dict:
         detail="Administrator access required."
     )
 
+def get_app_site_url() -> str:
+    """Returns the base URL of the Next.js app for auth redirects."""
+    explicit_url = os.getenv("NEXT_PUBLIC_SITE_URL") or os.getenv("APP_URL")
+    if explicit_url:
+        return explicit_url.rstrip("/")
+    vercel_prod = os.getenv("VERCEL_PROJECT_PRODUCTION_URL")
+    if vercel_prod:
+        return f"https://{vercel_prod.rstrip('/')}"
+    vercel_url = os.getenv("VERCEL_URL")
+    if vercel_url:
+        return f"https://{vercel_url.rstrip('/')}"
+    return "http://localhost:3000"
+
 class CreateApplicationRequest(BaseModel):
     cv_document_id: str
     job_title: str
@@ -97,9 +110,19 @@ class UpdateUserPayload(BaseModel):
     role: Optional[str] = None
     status: Optional[str] = None
 
+class UpdateUserProfilePayload(BaseModel):
+    name: Optional[str] = None
+    headline: Optional[str] = None
+    phone: Optional[str] = None
+    location: Optional[str] = None
+    linkedin_url: Optional[str] = None
+    github_url: Optional[str] = None
+    portfolio_url: Optional[str] = None
+    bio: Optional[str] = None
+
 @app.get("/api/health")
 def health_check():
-    return {"status": "ok", "app": "CV Tailor API", "version": "2.2.0"}
+    return {"status": "ok", "app": "CV Tailor API", "version": "2.3.0"}
 
 # ==========================================
 # PUBLIC: Access Requests
@@ -172,19 +195,6 @@ async def list_access_requests(admin_user: dict = Depends(get_admin_user)):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to list access requests: {str(e)}")
 
-def get_app_site_url() -> str:
-    """Returns the base URL of the Next.js app for auth redirects."""
-    explicit_url = os.getenv("NEXT_PUBLIC_SITE_URL") or os.getenv("APP_URL")
-    if explicit_url:
-        return explicit_url.rstrip("/")
-    vercel_prod = os.getenv("VERCEL_PROJECT_PRODUCTION_URL")
-    if vercel_prod:
-        return f"https://{vercel_prod.rstrip('/')}"
-    vercel_url = os.getenv("VERCEL_URL")
-    if vercel_url:
-        return f"https://{vercel_url.rstrip('/')}"
-    return "http://localhost:3000"
-
 @app.post("/api/admin/requests/{request_id}/approve")
 async def approve_access_request(request_id: str, admin_user: dict = Depends(get_admin_user)):
     admin = get_supabase_admin()
@@ -200,6 +210,8 @@ async def approve_access_request(request_id: str, admin_user: dict = Depends(get
     redirect_url = f"{site_url}/auth/callback?next=/set-password"
     
     direct_link = None
+    email_sent = True
+    
     try:
         invite_res = admin.auth.admin.invite_user_by_email(
             email,
@@ -218,14 +230,32 @@ async def approve_access_request(request_id: str, admin_user: dict = Depends(get
                 "terms_agreed": False
             }).execute()
     except Exception as e:
-        print(f"Invite email notice: {e}")
+        email_sent = False
+        print(f"Direct invite email notice: {e}")
+        
+    # Always generate direct password setup link as a fail-safe (bypasses SMTP rate limits)
+    try:
+        gen_res = admin.auth.admin.generate_link(
+            type="invite",
+            email=email,
+            options={
+                "data": {"name": name, "role": "user", "status": "invited"},
+                "redirect_to": redirect_url
+            }
+        )
+        if gen_res:
+            direct_link = getattr(gen_res, "action_link", None) or (gen_res.properties.get("action_link") if hasattr(gen_res, "properties") else None)
+    except Exception:
+        pass
         
     admin.table("access_requests").update({"status": "approved"}).eq("id", request_id).execute()
     
     return {
         "status": "approved",
         "email": email,
-        "message": f"Approved access request for {name} ({email}) and sent invitation email."
+        "email_sent": email_sent,
+        "direct_link": direct_link,
+        "message": f"Approved access request for {name} ({email})." if email_sent else f"Approved access for {name} ({email}). Direct invite link generated."
     }
 
 @app.post("/api/admin/requests/{request_id}/reject")
@@ -275,6 +305,10 @@ async def direct_invite_user(payload: DirectInvitePayload, admin_user: dict = De
     site_url = get_app_site_url()
     redirect_url = f"{site_url}/auth/callback?next=/set-password"
     
+    email_sent = True
+    direct_link = None
+    
+    # 1. Attempt sending invite email
     try:
         invite_res = admin.auth.admin.invite_user_by_email(
             email_clean,
@@ -283,7 +317,6 @@ async def direct_invite_user(payload: DirectInvitePayload, admin_user: dict = De
                 "redirect_to": redirect_url
             }
         )
-        
         if invite_res and invite_res.user:
             admin.table("profiles").upsert({
                 "id": invite_res.user.id,
@@ -293,13 +326,41 @@ async def direct_invite_user(payload: DirectInvitePayload, admin_user: dict = De
                 "status": "invited",
                 "terms_agreed": False
             }).execute()
-            
-        return {
-            "status": "success",
-            "message": f"Invitation email sent to {email_clean}."
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to invite user: {str(e)}")
+    except Exception as invite_err:
+        email_sent = False
+        print(f"Invite email warning: {invite_err}")
+
+    # 2. Always generate direct link (bypasses rate limit if email failed)
+    try:
+        gen_res = admin.auth.admin.generate_link(
+            type="invite",
+            email=email_clean,
+            options={
+                "data": {"name": name_clean, "role": "user", "status": "invited"},
+                "redirect_to": redirect_url
+            }
+        )
+        if gen_res:
+            direct_link = getattr(gen_res, "action_link", None) or (gen_res.properties.get("action_link") if hasattr(gen_res, "properties") else None)
+            if hasattr(gen_res, "user") and gen_res.user:
+                admin.table("profiles").upsert({
+                    "id": gen_res.user.id,
+                    "email": email_clean,
+                    "name": name_clean,
+                    "role": "user",
+                    "status": "invited",
+                    "terms_agreed": False
+                }).execute()
+    except Exception as gen_err:
+        print(f"Generate link warning: {gen_err}")
+        
+    return {
+        "status": "success",
+        "email": email_clean,
+        "email_sent": email_sent,
+        "direct_link": direct_link,
+        "message": f"Invitation email sent to {email_clean}." if email_sent else f"User invited! You can share the direct setup link with {email_clean}."
+    }
 
 @app.post("/api/admin/users/{target_user_id}/resend-invite")
 async def resend_user_invite(target_user_id: str, admin_user: dict = Depends(get_admin_user)):
@@ -326,31 +387,58 @@ async def resend_user_invite(target_user_id: str, admin_user: dict = Depends(get
     site_url = get_app_site_url()
     redirect_url = f"{site_url}/auth/callback?next=/set-password"
     
+    email_sent = True
+    direct_link = None
+    
+    # 1. Attempt sending invite / reset email
     try:
         try:
-            invite_res = admin.auth.admin.invite_user_by_email(
+            admin.auth.admin.invite_user_by_email(
                 email,
                 options={
                     "data": {"name": name, "role": "user", "status": "invited"},
                     "redirect_to": redirect_url
                 }
             )
-        except Exception as invite_err:
-            # If user already registered/confirmed in auth.users, send password setup/recovery link
+        except Exception:
             admin.auth.reset_password_for_email(
                 email,
                 options={"redirect_to": redirect_url}
             )
-        
-        admin.table("profiles").update({"status": "invited"}).eq("id", target_user_id).execute()
-        
-        return {
-            "status": "success",
-            "email": email,
-            "message": f"Password setup activation link has been resent to {email}."
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to resend activation link: {str(e)}")
+    except Exception as email_err:
+        email_sent = False
+        print(f"Resend email notice (likely rate limit): {email_err}")
+
+    # 2. Generate direct setup link (guaranteed to succeed regardless of SMTP rate limit)
+    try:
+        gen_res = admin.auth.admin.generate_link(
+            type="recovery",
+            email=email,
+            options={"redirect_to": redirect_url}
+        )
+        if gen_res:
+            direct_link = getattr(gen_res, "action_link", None) or (gen_res.properties.get("action_link") if hasattr(gen_res, "properties") else None)
+    except Exception as recovery_err:
+        try:
+            gen_res = admin.auth.admin.generate_link(
+                type="invite",
+                email=email,
+                options={"redirect_to": redirect_url}
+            )
+            if gen_res:
+                direct_link = getattr(gen_res, "action_link", None) or (gen_res.properties.get("action_link") if hasattr(gen_res, "properties") else None)
+        except Exception:
+            pass
+
+    admin.table("profiles").update({"status": "invited"}).eq("id", target_user_id).execute()
+    
+    return {
+        "status": "success",
+        "email": email,
+        "email_sent": email_sent,
+        "direct_link": direct_link,
+        "message": f"Password setup link resent to {email}." if email_sent else f"Generated direct setup link for {email} (bypassing email rate limit)."
+    }
 
 @app.patch("/api/admin/users/{target_user_id}")
 async def update_user_status(
@@ -387,16 +475,6 @@ async def delete_user(target_user_id: str, admin_user: dict = Depends(get_admin_
 # ==========================================
 # USER PROFILE & TERMS AGREEMENT
 # ==========================================
-
-class UpdateUserProfilePayload(BaseModel):
-    name: Optional[str] = None
-    headline: Optional[str] = None
-    phone: Optional[str] = None
-    location: Optional[str] = None
-    linkedin_url: Optional[str] = None
-    github_url: Optional[str] = None
-    portfolio_url: Optional[str] = None
-    bio: Optional[str] = None
 
 @app.get("/api/user/profile")
 async def get_user_profile(current_user: dict = Depends(get_current_user)):
@@ -450,7 +528,6 @@ async def update_user_profile(
     if payload.bio is not None:
         update_data["bio"] = payload.bio.strip()
         
-    # NOTE: User can edit anything, except their email or role/status
     if not update_data:
         return {"status": "noop"}
         
@@ -811,6 +888,10 @@ async def get_application_details(
             match_label = "Moderate Match"
             match_summary = "Candidate demonstrates solid foundational capabilities with opportunities for keyword alignment."
             
+    predicted_match_score = app_data.get("predicted_match_score")
+    if predicted_match_score is None:
+        predicted_match_score = min(98, match_score + 22)
+
     changes_res = admin.table("suggested_changes").select("*").eq("application_id", application_id).order("created_at").execute()
     gen_res = admin.table("generated_cvs").select("*").eq("application_id", application_id).order("created_at", desc=True).execute()
     
@@ -820,10 +901,6 @@ async def get_application_details(
             gen["download_url"] = create_signed_download_url("generated", gen["storage_path"], expires_in=3600)
         except Exception:
             gen["download_url"] = None
-
-    predicted_match_score = app_data.get("predicted_match_score")
-    if predicted_match_score is None:
-        predicted_match_score = min(98, match_score + 22)
 
     return {
         "application": app_data,

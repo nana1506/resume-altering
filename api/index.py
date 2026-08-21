@@ -301,6 +301,50 @@ async def direct_invite_user(payload: DirectInvitePayload, admin_user: dict = De
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to invite user: {str(e)}")
 
+@app.post("/api/admin/users/{target_user_id}/resend-invite")
+async def resend_user_invite(target_user_id: str, admin_user: dict = Depends(get_admin_user)):
+    admin = get_supabase_admin()
+    
+    user_res = admin.table("profiles").select("*").eq("id", target_user_id).execute()
+    email = None
+    name = "User"
+    if user_res.data:
+        email = user_res.data[0].get("email")
+        name = user_res.data[0].get("name") or "User"
+    
+    if not email:
+        try:
+            auth_user = admin.auth.admin.get_user_by_id(target_user_id)
+            if auth_user and auth_user.user:
+                email = auth_user.user.email
+        except Exception:
+            pass
+            
+    if not email:
+        raise HTTPException(status_code=404, detail="User email not found.")
+        
+    site_url = get_app_site_url()
+    redirect_url = f"{site_url}/auth/callback?next=/set-password"
+    
+    try:
+        invite_res = admin.auth.admin.invite_user_by_email(
+            email,
+            options={
+                "data": {"name": name, "role": "user", "status": "invited"},
+                "redirect_to": redirect_url
+            }
+        )
+        
+        admin.table("profiles").update({"status": "invited"}).eq("id", target_user_id).execute()
+        
+        return {
+            "status": "success",
+            "email": email,
+            "message": f"Activation link has been resent to {email}."
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to resend invite: {str(e)}")
+
 @app.patch("/api/admin/users/{target_user_id}")
 async def update_user_status(
     target_user_id: str,

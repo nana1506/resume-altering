@@ -6,12 +6,13 @@ import { useState, useEffect, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { createClient } from '@/lib/supabase/client';
-import { Sparkles, Lock, CheckCircle2, AlertCircle, Loader2, ArrowRight, KeyRound } from 'lucide-react';
+import { Sparkles, Lock, CheckCircle2, AlertCircle, Loader2, ArrowRight, KeyRound, Check } from 'lucide-react';
 
 function SetPasswordForm() {
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [loading, setLoading] = useState(false);
+  const [initializing, setInitializing] = useState(true);
   const [userEmail, setUserEmail] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
@@ -21,33 +22,67 @@ function SetPasswordForm() {
   const supabase = createClient();
 
   useEffect(() => {
-    // 1. Check for URL query params errors
-    const queryError = searchParams?.get('error_description') || searchParams?.get('error');
-    if (queryError) {
-      setErrorMsg(queryError);
-    }
-
-    // 2. Check for URL hash fragments (e.g. #access_token=... or #error=...)
-    if (typeof window !== 'undefined' && window.location.hash) {
-      const hash = window.location.hash.substring(1);
-      const params = new URLSearchParams(hash);
-      const hashError = params.get('error_description') || params.get('error');
-      if (hashError) {
-        setErrorMsg(decodeURIComponent(hashError.replace(/\+/g, ' ')));
-      }
-    }
-
-    // 3. Listen to auth state and check active session
-    const checkSession = async () => {
+    async function initSessionFromUrl() {
       try {
+        // 1. Check for URL query params errors
+        const queryError = searchParams?.get('error_description') || searchParams?.get('error');
+        if (queryError) {
+          setErrorMsg(decodeURIComponent(queryError.replace(/\+/g, ' ')));
+        }
+
+        // 2. Check for PKCE flow 'code' query parameter
+        const code = searchParams?.get('code');
+        if (code) {
+          const { data: codeData, error: codeErr } = await supabase.auth.exchangeCodeForSession(code);
+          if (!codeErr && codeData?.session) {
+            setUserEmail(codeData.session.user.email ?? null);
+            setErrorMsg(null);
+            setInitializing(false);
+            return;
+          }
+        }
+
+        // 3. Check for Implicit flow hash tokens (#access_token=...&refresh_token=...)
+        if (typeof window !== 'undefined' && window.location.hash) {
+          const hash = window.location.hash.substring(1);
+          const params = new URLSearchParams(hash);
+          
+          const hashError = params.get('error_description') || params.get('error');
+          if (hashError) {
+            setErrorMsg(decodeURIComponent(hashError.replace(/\+/g, ' ')));
+          }
+
+          const accessToken = params.get('access_token');
+          const refreshToken = params.get('refresh_token');
+
+          if (accessToken && refreshToken) {
+            const { data: hashData, error: hashErr } = await supabase.auth.setSession({
+              access_token: accessToken,
+              refresh_token: refreshToken,
+            });
+
+            if (!hashErr && hashData?.session) {
+              setUserEmail(hashData.session.user.email ?? null);
+              setErrorMsg(null);
+              setInitializing(false);
+              return;
+            } else if (hashErr) {
+              console.error('Error setting session from hash:', hashErr);
+            }
+          }
+        }
+
+        // 4. Check existing session
         const { data: { session } } = await supabase.auth.getSession();
         if (session && session.user) {
           setUserEmail(session.user.email ?? null);
         }
-      } catch (err) {
-        console.error('Session check error:', err);
+      } catch (err: any) {
+        console.error('Session initialization error:', err);
+      } finally {
+        setInitializing(false);
       }
-    };
+    }
 
     const { data: authListener } = supabase.auth.onAuthStateChange((event, session) => {
       if (session && session.user) {
@@ -56,7 +91,7 @@ function SetPasswordForm() {
       }
     });
 
-    checkSession();
+    initSessionFromUrl();
 
     return () => {
       authListener?.subscription.unsubscribe();
@@ -80,6 +115,27 @@ function SetPasswordForm() {
     setLoading(true);
 
     try {
+      // If session is missing, re-try parsing URL hash before updating
+      let { data: { session } } = await supabase.auth.getSession();
+      
+      if (!session && typeof window !== 'undefined' && window.location.hash) {
+        const hash = window.location.hash.substring(1);
+        const params = new URLSearchParams(hash);
+        const accessToken = params.get('access_token');
+        const refreshToken = params.get('refresh_token');
+        if (accessToken && refreshToken) {
+          const res = await supabase.auth.setSession({
+            access_token: accessToken,
+            refresh_token: refreshToken,
+          });
+          session = res.data?.session ?? null;
+        }
+      }
+
+      if (!session) {
+        throw new Error('Authentication session is missing or expired. Please use the direct invite link sent to your email.');
+      }
+
       const { data, error } = await supabase.auth.updateUser({
         password: password,
       });
@@ -88,12 +144,13 @@ function SetPasswordForm() {
         throw error;
       }
 
-      setSuccessMsg('Your password has been successfully established! Redirecting to your dashboard...');
+      setSuccessMsg('Your password has been set successfully! Redirecting to your dashboard...');
       setTimeout(() => {
         router.push('/dashboard');
         router.refresh();
-      }, 1500);
+      }, 1200);
     } catch (err: any) {
+      console.error('Set password error:', err);
       setErrorMsg(err.message || 'Failed to set password. Your invite link may have expired or is invalid.');
     } finally {
       setLoading(false);
@@ -122,7 +179,7 @@ function SetPasswordForm() {
             <AlertCircle className="w-5 h-5 shrink-0 mt-0.5" />
             <p className="flex-1 font-medium">{errorMsg}</p>
           </div>
-          {errorMsg.toLowerCase().includes('expired') || errorMsg.toLowerCase().includes('invalid') ? (
+          {errorMsg.toLowerCase().includes('expired') || errorMsg.toLowerCase().includes('missing') || errorMsg.toLowerCase().includes('invalid') ? (
             <p className="text-xs text-rose-600 pl-7">
               Invitation links expire for security. Please ask the administrator to re-invite you, or{' '}
               <Link href="/request-access" className="underline font-semibold">
@@ -183,7 +240,7 @@ function SetPasswordForm() {
 
         <button
           type="submit"
-          disabled={loading}
+          disabled={loading || initializing}
           className="w-full py-3 px-4 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-sm shadow-md shadow-indigo-500/25 transition-all flex items-center justify-center gap-2 disabled:opacity-50"
         >
           {loading ? (

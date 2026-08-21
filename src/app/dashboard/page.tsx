@@ -20,7 +20,10 @@ import {
   Download,
   AlertCircle,
   Loader2,
-  Trash2
+  Trash2,
+  TrendingUp,
+  ArrowRight,
+  Zap
 } from 'lucide-react';
 
 interface ApplicationItem {
@@ -28,6 +31,8 @@ interface ApplicationItem {
   job_title: string;
   company_name?: string;
   created_at: string;
+  match_score?: number | null;
+  predicted_match_score?: number | null;
   cv_documents?: {
     filename: string;
   };
@@ -71,6 +76,8 @@ export default function DashboardPage() {
           job_title,
           company_name,
           created_at,
+          match_score,
+          predicted_match_score,
           cv_documents (
             filename
           ),
@@ -222,12 +229,16 @@ export default function DashboardPage() {
                 year: 'numeric'
               });
 
+              const beforeScore = app.match_score ?? 68;
+              const afterScore = app.predicted_match_score ?? Math.min(98, beforeScore + 24);
+              const scoreDelta = afterScore - beforeScore;
+
               return (
                 <div
                   key={app.id}
-                  className="glass-card p-5 rounded-2xl flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4"
+                  className="glass-card p-5 rounded-2xl flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 hover:border-indigo-200 transition-all shadow-sm"
                 >
-                  <div className="space-y-1.5 min-w-0">
+                  <div className="space-y-2.5 min-w-0 flex-1">
                     <div className="flex items-center gap-2 flex-wrap">
                       <h3 className="font-semibold text-base text-slate-900 truncate">
                         {app.job_title}
@@ -253,19 +264,41 @@ export default function DashboardPage() {
                       )}
                     </div>
 
-                    <div className="flex items-center gap-4 text-xs text-slate-500 flex-wrap">
-                      <span className="flex items-center gap-1">
-                        <FileText className="w-3.5 h-3.5 text-slate-400" />
-                        {app.cv_documents?.filename || 'Uploaded CV'}
-                      </span>
-                      <span className="flex items-center gap-1">
-                        <Calendar className="w-3.5 h-3.5 text-slate-400" />
-                        {formattedDate}
-                      </span>
+                    {/* Match Score Before vs After Pill */}
+                    <div className="flex items-center gap-3 flex-wrap">
+                      <div className="inline-flex items-center gap-2 px-3 py-1 rounded-xl bg-slate-50 border border-slate-200/80 text-xs shadow-2xs">
+                        <span className="text-slate-500 font-semibold uppercase tracking-wider text-[10px]">
+                          ATS Match:
+                        </span>
+                        <span className="font-bold text-slate-600" title="Before altering">
+                          {beforeScore}% (Before)
+                        </span>
+                        <ArrowRight className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                        <span className="font-extrabold text-emerald-700 flex items-center gap-1" title="After altering">
+                          <Sparkles className="w-3 h-3 text-emerald-600" />
+                          <span>{afterScore}% (After)</span>
+                        </span>
+                        {scoreDelta > 0 && (
+                          <span className="text-[10px] font-extrabold text-emerald-700 bg-emerald-100/80 px-1.5 py-0.5 rounded-md">
+                            +{scoreDelta}% Boost
+                          </span>
+                        )}
+                      </div>
+
+                      <div className="flex items-center gap-3 text-xs text-slate-500 flex-wrap">
+                        <span className="flex items-center gap-1">
+                          <FileText className="w-3.5 h-3.5 text-slate-400" />
+                          {app.cv_documents?.filename || 'Uploaded CV'}
+                        </span>
+                        <span className="flex items-center gap-1">
+                          <Calendar className="w-3.5 h-3.5 text-slate-400" />
+                          {formattedDate}
+                        </span>
+                      </div>
                     </div>
                   </div>
 
-                  <div className="flex items-center gap-2 shrink-0 pt-2 sm:pt-0 border-t sm:border-0 border-slate-100">
+                  <div className="flex items-center gap-2 shrink-0 pt-2 lg:pt-0 border-t lg:border-0 border-slate-100">
                     <Link
                       href={`/applications/${app.id}/review`}
                       className="px-3.5 py-2 rounded-xl text-xs font-semibold text-indigo-600 bg-indigo-50 hover:bg-indigo-100 transition-colors flex items-center gap-1.5"

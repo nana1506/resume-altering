@@ -494,6 +494,7 @@ async def generate_suggestions(
         keywords_json = [k.model_dump() for k in analysis.keywords]
         admin.table("job_applications").update({
             "match_score": analysis.match_score,
+            "predicted_match_score": analysis.predicted_match_score or min(98, analysis.match_score + 25),
             "match_label": analysis.match_label,
             "match_summary": analysis.match_summary,
             "keywords_analysis": keywords_json
@@ -506,6 +507,7 @@ async def generate_suggestions(
     if existing.data and len(existing.data) > 0:
         return {
             "match_score": analysis.match_score,
+            "predicted_match_score": analysis.predicted_match_score or min(98, analysis.match_score + 25),
             "match_label": analysis.match_label,
             "match_summary": analysis.match_summary,
             "keywords": analysis.keywords,
@@ -533,6 +535,7 @@ async def generate_suggestions(
         
     return {
         "match_score": analysis.match_score,
+        "predicted_match_score": analysis.predicted_match_score or min(98, analysis.match_score + 25),
         "match_label": analysis.match_label,
         "match_summary": analysis.match_summary,
         "keywords": analysis.keywords,
@@ -693,9 +696,14 @@ async def get_application_details(
         except Exception:
             gen["download_url"] = None
 
+    predicted_match_score = app_data.get("predicted_match_score")
+    if predicted_match_score is None:
+        predicted_match_score = min(98, match_score + 22)
+
     return {
         "application": app_data,
         "match_score": match_score,
+        "predicted_match_score": predicted_match_score,
         "match_label": match_label,
         "match_summary": match_summary,
         "keywords_analysis": keywords_analysis,

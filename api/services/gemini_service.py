@@ -23,7 +23,8 @@ class SuggestionItem(BaseModel):
     reason: str = Field(..., description="Explanation of which job vacancy requirement or skill keyword this addresses")
 
 class GeminiAnalysisResponse(BaseModel):
-    match_score: int = Field(..., ge=0, le=100, description="Overall ATS compatibility match score from 0 to 100 percentage")
+    match_score: int = Field(..., ge=0, le=100, description="Original ATS compatibility match score from 0 to 100 percentage before changes")
+    predicted_match_score: Optional[int] = Field(default=None, ge=0, le=100, description="Predicted ATS match score (typically 88-98%) after applying all suggested alterations")
     match_label: str = Field(..., description="Fit label: 'Strong Match' (>=80%), 'Moderate Match' (60-79%), or 'Low Match' (<60%)")
     match_summary: str = Field(..., description="Executive summary highlighting candidate strengths and critical keyword gaps")
     keywords: List[KeywordItem] = Field(..., description="Comprehensive list of 8-20 critical keywords from the job vacancy with CV presence status")
@@ -133,9 +134,10 @@ CRITICAL KEYWORD EXTRACTION RULES:
 5. Write a concise executive match_summary explaining the alignment strengths and the primary gap areas.
 6. Provide precise, actionable section-by-section bullet suggestions (in 'Summary', 'Skills', 'Experience', etc.) to directly address the "not_exists" and "different_terms" keyword gaps.
 
-Return ONLY valid JSON matching this schema:
+You MUST return ONLY valid JSON matching this schema:
 {{
-  "match_score": 75,
+  "match_score": 68,
+  "predicted_match_score": 95,
   "match_label": "Moderate Match",
   "match_summary": "Candidate has solid foundational experience in ..., but lacks explicit mentions of ... required by the vacancy.",
   "keywords": [

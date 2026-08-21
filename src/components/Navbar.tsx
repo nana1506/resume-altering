@@ -4,10 +4,12 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter, usePathname } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
-import { Sparkles, FileText, PlusCircle, LogOut, LayoutDashboard, User } from 'lucide-react';
+import { fetchWithAuth } from '@/lib/api';
+import { Sparkles, PlusCircle, LogOut, LayoutDashboard, User, ShieldCheck } from 'lucide-react';
 
 export default function Navbar() {
   const [user, setUser] = useState<{ id: string; email?: string } | null>(null);
+  const [isAdmin, setIsAdmin] = useState(false);
   const [loading, setLoading] = useState(true);
   const router = useRouter();
   const pathname = usePathname();
@@ -17,7 +19,19 @@ export default function Navbar() {
     async function checkUser() {
       try {
         const { data: { session } } = await supabase.auth.getSession();
-        setUser(session?.user ?? null);
+        const currentUser = session?.user ?? null;
+        setUser(currentUser);
+
+        if (currentUser) {
+          try {
+            const profile = await fetchWithAuth('/api/user/profile');
+            setIsAdmin(profile.role === 'admin' || profile.email === 'isnan.rizqikurniawan@gmail.com');
+          } catch (e) {
+            setIsAdmin(currentUser.email === 'isnan.rizqikurniawan@gmail.com');
+          }
+        } else {
+          setIsAdmin(false);
+        }
       } catch (err) {
         console.error('Error fetching session:', err);
       } finally {
@@ -28,7 +42,13 @@ export default function Navbar() {
     checkUser();
 
     const { data: authListener } = supabase.auth.onAuthStateChange((_event, session) => {
-      setUser(session?.user ?? null);
+      const currentUser = session?.user ?? null;
+      setUser(currentUser);
+      if (currentUser) {
+        setIsAdmin(currentUser.email === 'isnan.rizqikurniawan@gmail.com');
+      } else {
+        setIsAdmin(false);
+      }
     });
 
     return () => {
@@ -42,10 +62,10 @@ export default function Navbar() {
     router.refresh();
   };
 
-  const isAuthPage = pathname === '/login' || pathname === '/register';
+  const isAuthPage = pathname === '/login' || pathname === '/register' || pathname === '/request-access';
 
   return (
-    <header className="sticky top-0 z-50 glass-panel border-b border-slate-200">
+    <header className="sticky top-0 z-40 glass-panel border-b border-slate-200">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex justify-between items-center h-16">
           {/* Brand Logo */}
@@ -60,16 +80,30 @@ export default function Navbar() {
                   AI
                 </span>
               </span>
-              <span className="text-[11px] text-slate-500 hidden sm:inline">Job-Vacancy Matching</span>
+              <span className="text-[11px] text-slate-500 hidden sm:inline">Invitation-Only ATS Matching</span>
             </div>
           </Link>
 
           {/* Navigation Links */}
-          <nav className="flex items-center gap-2 sm:gap-4">
+          <nav className="flex items-center gap-2 sm:gap-3">
             {!loading && (
               <>
                 {user ? (
                   <>
+                    {isAdmin && (
+                      <Link
+                        href="/admin"
+                        className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-semibold transition-colors ${
+                          pathname === '/admin'
+                            ? 'bg-amber-500/10 text-amber-800 border border-amber-300/60'
+                            : 'text-amber-700 hover:bg-amber-50'
+                        }`}
+                      >
+                        <ShieldCheck className="w-4 h-4 text-amber-600" />
+                        <span>Admin Panel</span>
+                      </Link>
+                    )}
+
                     <Link
                       href="/dashboard"
                       className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
@@ -87,13 +121,16 @@ export default function Navbar() {
                       className="flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-sm font-medium bg-indigo-600 text-white hover:bg-indigo-700 shadow-sm shadow-indigo-500/25 transition-all hover:shadow"
                     >
                       <PlusCircle className="w-4 h-4" />
-                      <span>Tailor New CV</span>
+                      <span>Tailor CV</span>
                     </Link>
 
                     <div className="h-5 w-[1px] bg-slate-200 mx-1 hidden sm:block" />
 
                     <div className="flex items-center gap-2 pl-1">
-                      <div className="w-8 h-8 rounded-full bg-slate-100 border border-slate-200 flex items-center justify-center text-slate-600 text-xs font-semibold" title={user.email}>
+                      <div 
+                        className="w-8 h-8 rounded-full bg-slate-100 border border-slate-200 flex items-center justify-center text-slate-600 text-xs font-semibold" 
+                        title={`${user.email}${isAdmin ? ' (Admin)' : ''}`}
+                      >
                         {user.email ? user.email[0].toUpperCase() : <User className="w-4 h-4" />}
                       </div>
 
@@ -116,10 +153,10 @@ export default function Navbar() {
                         Sign In
                       </Link>
                       <Link
-                        href="/register"
+                        href="/request-access"
                         className="px-4 py-2 text-sm font-medium bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg shadow-sm transition-colors"
                       >
-                        Get Started
+                        Request Access
                       </Link>
                     </div>
                   )

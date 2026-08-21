@@ -2,14 +2,16 @@
 
 export const dynamic = 'force-dynamic';
 
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { fetchWithAuth } from '@/lib/api';
+import TermsModal from '@/components/TermsModal';
 import { 
   Upload, 
   FileText, 
   Sparkles, 
   Briefcase, 
+  Building2,
   CheckCircle2, 
   AlertCircle, 
   Loader2, 
@@ -20,14 +22,30 @@ import {
 export default function NewApplicationPage() {
   const [file, setFile] = useState<File | null>(null);
   const [jobTitle, setJobTitle] = useState('');
+  const [companyName, setCompanyName] = useState('');
   const [jobDescription, setJobDescription] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [currentStep, setCurrentStep] = useState<'idle' | 'uploading' | 'creating' | 'analyzing'>('idle');
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [isDragOver, setIsDragOver] = useState(false);
+  const [showTermsModal, setShowTermsModal] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const router = useRouter();
+
+  useEffect(() => {
+    async function checkTerms() {
+      try {
+        const profile = await fetchWithAuth('/api/user/profile');
+        if (!profile.terms_agreed) {
+          setShowTermsModal(true);
+        }
+      } catch (e) {
+        console.error(e);
+      }
+    }
+    checkTerms();
+  }, []);
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
@@ -101,7 +119,7 @@ export default function NewApplicationPage() {
         throw new Error('Could not retrieve CV document ID.');
       }
 
-      // Step 2: Create Job Application record
+      // Step 2: Create Job Application record (with company_name)
       setCurrentStep('creating');
       const appRes = await fetchWithAuth('/api/applications', {
         method: 'POST',
@@ -109,6 +127,7 @@ export default function NewApplicationPage() {
         body: JSON.stringify({
           cv_document_id: cvDocumentId,
           job_title: jobTitle.trim(),
+          company_name: companyName.trim() || null,
           job_description_text: jobDescription.trim(),
         }),
       });
@@ -136,6 +155,12 @@ export default function NewApplicationPage() {
 
   return (
     <div className="max-w-3xl mx-auto py-4 space-y-8">
+      {/* Terms & Conditions Modal */}
+      <TermsModal
+        isOpen={showTermsModal}
+        onAccepted={() => setShowTermsModal(false)}
+      />
+
       {/* Header */}
       <div className="text-center space-y-2">
         <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-indigo-50 text-indigo-700 text-xs font-semibold border border-indigo-100">
@@ -144,7 +169,7 @@ export default function NewApplicationPage() {
         </div>
         <h1 className="text-3xl font-bold text-slate-900 tracking-tight">Tailor Your CV</h1>
         <p className="text-sm text-slate-500 max-w-lg mx-auto">
-          Upload your existing CV and target job description. Gemini will suggest tailored bullet edits to maximize ATS score.
+          Upload your existing CV, specify the target company and position, and paste the vacancy requirements.
         </p>
       </div>
 
@@ -256,32 +281,52 @@ export default function NewApplicationPage() {
             )}
           </div>
 
-          {/* Section 2: Target Vacancy */}
+          {/* Section 2: Target Vacancy Details */}
           <div className="glass-card p-6 sm:p-7 rounded-2xl space-y-4">
             <div className="flex items-center justify-between">
               <label className="text-sm font-bold text-slate-900 flex items-center gap-2">
                 <Briefcase className="w-4 h-4 text-indigo-600" />
-                <span>2. Target Job Vacancy Details</span>
+                <span>2. Target Job & Company</span>
               </label>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 uppercase tracking-wider mb-1.5">
+                  Job Position / Title *
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={jobTitle}
+                  onChange={(e) => setJobTitle(e.target.value)}
+                  placeholder="e.g. Senior Frontend Engineer"
+                  className="w-full px-4 py-2.5 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-600 text-sm text-slate-900 placeholder:text-slate-400 transition-all bg-slate-50/50 focus:bg-white"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 uppercase tracking-wider mb-1.5">
+                  Target Company Name (Optional)
+                </label>
+                <div className="relative">
+                  <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-400">
+                    <Building2 className="w-4 h-4" />
+                  </div>
+                  <input
+                    type="text"
+                    value={companyName}
+                    onChange={(e) => setCompanyName(e.target.value)}
+                    placeholder="e.g. Google, Stripe, Acme Corp"
+                    className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-600 text-sm text-slate-900 placeholder:text-slate-400 transition-all bg-slate-50/50 focus:bg-white"
+                  />
+                </div>
+              </div>
             </div>
 
             <div>
               <label className="block text-xs font-semibold text-slate-600 uppercase tracking-wider mb-1.5">
-                Job Title / Position
-              </label>
-              <input
-                type="text"
-                required
-                value={jobTitle}
-                onChange={(e) => setJobTitle(e.target.value)}
-                placeholder="e.g. Senior Frontend Engineer / Product Manager"
-                className="w-full px-4 py-2.5 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-600 text-sm text-slate-900 placeholder:text-slate-400 transition-all bg-slate-50/50 focus:bg-white"
-              />
-            </div>
-
-            <div>
-              <label className="block text-xs font-semibold text-slate-600 uppercase tracking-wider mb-1.5">
-                Job Vacancy Description & Requirements
+                Job Vacancy Description & Requirements *
               </label>
               <textarea
                 required

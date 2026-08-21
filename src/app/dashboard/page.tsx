@@ -6,23 +6,27 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
+import { fetchWithAuth } from '@/lib/api';
+import TermsModal from '@/components/TermsModal';
 import { 
   PlusCircle, 
   FileText, 
   Briefcase, 
+  Building2, 
   Sparkles, 
   Calendar, 
-  ArrowRight, 
   CheckCircle2, 
   Clock, 
   Download,
   AlertCircle,
-  Loader2
+  Loader2,
+  Trash2
 } from 'lucide-react';
 
 interface ApplicationItem {
   id: string;
   job_title: string;
+  company_name?: string;
   created_at: string;
   cv_documents?: {
     filename: string;
@@ -35,64 +39,102 @@ export default function DashboardPage() {
   const [applications, setApplications] = useState<ApplicationItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [showTermsModal, setShowTermsModal] = useState(false);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+
   const supabase = createClient();
   const router = useRouter();
 
-  useEffect(() => {
-    async function loadDashboardData() {
-      try {
-        const { data: { user } } = await supabase.auth.getUser();
-        if (!user) {
-          router.push('/login');
-          return;
-        }
-
-        // Fetch applications with joined cv_documents, suggestions, and generated cvs
-        const { data, error } = await supabase
-          .from('job_applications')
-          .select(`
-            id,
-            job_title,
-            created_at,
-            cv_documents (
-              filename
-            ),
-            suggested_changes (
-              id,
-              checked
-            ),
-            generated_cvs (
-              id,
-              storage_path
-            )
-          `)
-          .order('created_at', { ascending: false });
-
-        if (error) {
-          throw error;
-        }
-
-        setApplications((data as unknown as ApplicationItem[]) || []);
-      } catch (err: any) {
-        setErrorMsg(err.message || 'Failed to load applications');
-      } finally {
-        setLoading(false);
+  const loadDashboardData = async () => {
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) {
+        router.push('/login');
+        return;
       }
-    }
 
+      // Check profile terms agreement
+      try {
+        const profile = await fetchWithAuth('/api/user/profile');
+        if (!profile.terms_agreed) {
+          setShowTermsModal(true);
+        }
+      } catch (e) {
+        console.error('Error fetching profile terms:', e);
+      }
+
+      // Fetch applications with joined cv_documents, suggestions, and generated cvs
+      const { data, error } = await supabase
+        .from('job_applications')
+        .select(`
+          id,
+          job_title,
+          company_name,
+          created_at,
+          cv_documents (
+            filename
+          ),
+          suggested_changes (
+            id,
+            checked
+          ),
+          generated_cvs (
+            id,
+            storage_path
+          )
+        `)
+        .order('created_at', { ascending: false });
+
+      if (error) {
+        throw error;
+      }
+
+      setApplications((data as unknown as ApplicationItem[]) || []);
+    } catch (err: any) {
+      setErrorMsg(err.message || 'Failed to load applications');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
     loadDashboardData();
   }, [supabase, router]);
+
+  const handleDeleteApplication = async (appId: string, jobTitle: string) => {
+    if (!confirm(`Are you sure you want to delete the tailored CV application for "${jobTitle}"? This cannot be undone.`)) {
+      return;
+    }
+
+    setDeletingId(appId);
+    try {
+      await fetchWithAuth(`/api/applications/${appId}`, {
+        method: 'DELETE',
+      });
+      setApplications((prev) => prev.filter((a) => a.id !== appId));
+    } catch (err: any) {
+      alert(err.message || 'Failed to delete application.');
+    } finally {
+      setDeletingId(null);
+    }
+  };
 
   const totalGenerated = applications.filter(a => a.generated_cvs && a.generated_cvs.length > 0).length;
   const totalSuggestions = applications.reduce((acc, curr) => acc + (curr.suggested_changes?.length || 0), 0);
 
   return (
     <div className="space-y-8">
+      {/* Terms & Conditions Modal */}
+      <TermsModal
+        isOpen={showTermsModal}
+        onAccepted={() => setShowTermsModal(false)}
+      />
+
       {/* Header Banner */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
           <h1 className="text-2xl sm:text-3xl font-bold text-slate-900 tracking-tight">Your CV Applications</h1>
-          <p className="text-sm text-slate-500 mt-1">Track, review, and generate tailored CVs for your job targets</p>
+          <p className="text-sm text-slate-500 mt-1">Track, review, and manage tailored CVs for your job targets</p>
         </div>
         <Link
           href="/new"
@@ -158,7 +200,7 @@ export default function DashboardPage() {
             <div>
               <h3 className="font-bold text-slate-900 text-lg">No tailored CVs yet</h3>
               <p className="text-sm text-slate-500 mt-1">
-                Upload your existing CV and paste your first target job description to get instant keyword alignments.
+                Upload your existing CV and paste your target job description to get instant keyword alignments.
               </p>
             </div>
             <Link
@@ -190,6 +232,14 @@ export default function DashboardPage() {
                       <h3 className="font-semibold text-base text-slate-900 truncate">
                         {app.job_title}
                       </h3>
+
+                      {app.company_name && (
+                        <span className="inline-flex items-center gap-1 text-xs font-medium text-slate-600 bg-slate-100 px-2.5 py-0.5 rounded-md border border-slate-200">
+                          <Building2 className="w-3 h-3 text-slate-500" />
+                          <span>{app.company_name}</span>
+                        </span>
+                      )}
+
                       {hasGenerated ? (
                         <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full">
                           <CheckCircle2 className="w-3 h-3" />
@@ -232,6 +282,19 @@ export default function DashboardPage() {
                         <span>View PDF</span>
                       </Link>
                     )}
+
+                    <button
+                      onClick={() => handleDeleteApplication(app.id, app.job_title)}
+                      disabled={deletingId === app.id}
+                      className="p-2 rounded-xl text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors"
+                      title="Delete Application"
+                    >
+                      {deletingId === app.id ? (
+                        <Loader2 className="w-4 h-4 animate-spin text-rose-600" />
+                      ) : (
+                        <Trash2 className="w-4 h-4" />
+                      )}
+                    </button>
                   </div>
                 </div>
               );

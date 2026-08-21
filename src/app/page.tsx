@@ -1,14 +1,14 @@
 import Link from 'next/link';
-import { Sparkles, CheckCircle2, ArrowRight, Upload, Wand2, Download, ShieldCheck, FileCheck } from 'lucide-react';
+import { Sparkles, CheckCircle2, ArrowRight, Upload, Wand2, Download, ShieldCheck, FileCheck, Lock } from 'lucide-react';
 
 export default function HomePage() {
   return (
     <div className="space-y-16 pb-12">
       {/* Hero Section */}
       <section className="text-center max-w-3xl mx-auto pt-6 sm:pt-12 space-y-6">
-        <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-indigo-50 border border-indigo-100 text-indigo-700 text-xs font-semibold">
+        <div className="inline-flex items-center gap-2 px-3.5 py-1 rounded-full bg-indigo-50 border border-indigo-100 text-indigo-700 text-xs font-semibold">
           <Sparkles className="w-3.5 h-3.5" />
-          <span>Tailor your CV for ATS screening in seconds</span>
+          <span>Invitation-Only AI CV Optimization</span>
         </div>
 
         <h1 className="text-4xl sm:text-5xl font-extrabold text-slate-900 tracking-tight leading-[1.15]">
@@ -21,17 +21,17 @@ export default function HomePage() {
 
         <div className="flex flex-col sm:flex-row items-center justify-center gap-4 pt-4">
           <Link
-            href="/register"
+            href="/request-access"
             className="w-full sm:w-auto px-7 py-3.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-medium shadow-lg shadow-indigo-500/25 transition-all flex items-center justify-center gap-2 text-base group"
           >
-            <span>Get Started for Free</span>
+            <span>Request Access Invite</span>
             <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
           </Link>
           <Link
             href="/login"
             className="w-full sm:w-auto px-7 py-3.5 rounded-xl bg-white hover:bg-slate-50 border border-slate-200 text-slate-700 font-medium transition-colors flex items-center justify-center text-base shadow-sm"
           >
-            Sign In to Account
+            Sign In with Invite
           </Link>
         </div>
       </section>
@@ -42,9 +42,9 @@ export default function HomePage() {
           <div className="w-12 h-12 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center font-bold text-lg">
             <Upload className="w-6 h-6" />
           </div>
-          <h3 className="font-semibold text-lg text-slate-900">1. Upload & Paste</h3>
+          <h3 className="font-semibold text-lg text-slate-900">1. Upload & Set Target</h3>
           <p className="text-sm text-slate-600 leading-relaxed">
-            Upload your PDF/DOCX resume and paste the vacancy text. Our parser extracts clean sections automatically.
+            Upload your PDF/DOCX resume, specify the target company and position, and paste the vacancy text.
           </p>
         </div>
 
@@ -52,7 +52,7 @@ export default function HomePage() {
           <div className="w-12 h-12 rounded-xl bg-violet-50 text-violet-600 flex items-center justify-center font-bold text-lg">
             <Wand2 className="w-6 h-6" />
           </div>
-          <h3 className="font-semibold text-lg text-slate-900">2. Review Suggestions</h3>
+          <h3 className="font-semibold text-lg text-slate-900">2. Review Checklist</h3>
           <p className="text-sm text-slate-600 leading-relaxed">
             Check or uncheck Gemini suggestions. Click to edit bullet points inline without losing control.
           </p>
@@ -64,7 +64,7 @@ export default function HomePage() {
           </div>
           <h3 className="font-semibold text-lg text-slate-900">3. Download PDF</h3>
           <p className="text-sm text-slate-600 leading-relaxed">
-            Only approved changes are incorporated into an ATS-friendly, clean PDF with signed storage download.
+            Approved changes are formatted into an ATS-friendly, clean PDF available via signed storage download.
           </p>
         </div>
       </section>
@@ -74,11 +74,11 @@ export default function HomePage() {
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
           <div className="flex items-start gap-3.5">
             <div className="p-2 rounded-lg bg-indigo-100 text-indigo-700 shrink-0">
-              <CheckCircle2 className="w-5 h-5" />
+              <Lock className="w-5 h-5" />
             </div>
             <div>
-              <h4 className="font-semibold text-slate-900">Precise & Non-Destructive</h4>
-              <p className="text-xs text-slate-600 mt-1">Never rewrites your entire background. Only suggests targeted keyword alignments.</p>
+              <h4 className="font-semibold text-slate-900">Curated & Invitation-Only</h4>
+              <p className="text-xs text-slate-600 mt-1">Controlled access with administrative approval to ensure premium service.</p>
             </div>
           </div>
 

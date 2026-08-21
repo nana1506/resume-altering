@@ -2,9 +2,10 @@ import os
 import uuid
 import base64
 from typing import Optional, List
+from datetime import datetime, timezone
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Header, Depends, status
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, EmailStr
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -18,7 +19,7 @@ from api.services.parser import extract_text_from_file
 from api.services.gemini_service import generate_cv_suggestions
 from api.services.pdf_generator import generate_tailored_pdf
 
-app = FastAPI(title="CV Tailor API", version="1.0.0")
+app = FastAPI(title="CV Tailor API", version="2.0.0")
 
 # Enable CORS for Next.js frontend
 app.add_middleware(
@@ -28,6 +29,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Root admin email fallback
+ADMIN_EMAIL = "isnan.rizqikurniawan@gmail.com"
 
 # Dependency for authenticating user from Supabase Bearer token
 def get_current_user(authorization: Optional[str] = Header(None)) -> dict:
@@ -55,19 +59,336 @@ def get_current_user(authorization: Optional[str] = Header(None)) -> dict:
             detail=f"Authentication failed: {str(e)}"
         )
 
+# Dependency for Admin authorization
+def get_admin_user(current_user: dict = Depends(get_current_user)) -> dict:
+    admin = get_supabase_admin()
+    try:
+        res = admin.table("profiles").select("role, email").eq("id", current_user["id"]).execute()
+        if res.data and res.data[0].get("role") == "admin":
+            return current_user
+    except Exception:
+        pass
+    
+    # Root admin email fallback
+    if current_user.get("email") == ADMIN_EMAIL:
+        return current_user
+        
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail="Administrator access required."
+    )
+
 # Pydantic Request Models
 class CreateApplicationRequest(BaseModel):
     cv_document_id: str
     job_title: str
+    company_name: Optional[str] = None
     job_description_text: str
 
 class UpdateChangeRequest(BaseModel):
     checked: Optional[bool] = None
     final_text: Optional[str] = None
 
+class AccessRequestPayload(BaseModel):
+    name: str
+    email: str
+    goals: str
+
+class DirectInvitePayload(BaseModel):
+    name: str
+    email: str
+
+class UpdateUserPayload(BaseModel):
+    role: Optional[str] = None
+    status: Optional[str] = None
+
 @app.get("/api/health")
 def health_check():
-    return {"status": "ok", "app": "CV Tailor API"}
+    return {"status": "ok", "app": "CV Tailor API", "version": "2.0.0"}
+
+# ==========================================
+# PUBLIC: Access Requests
+# ==========================================
+
+@app.post("/api/access-requests")
+async def submit_access_request(payload: AccessRequestPayload):
+    """Public endpoint for prospective users to request an invitation."""
+    admin = get_supabase_admin()
+    email_clean = payload.email.strip().lower()
+    
+    # Check if request already exists
+    existing = admin.table("access_requests").select("*").eq("email", email_clean).execute()
+    if existing.data:
+        return {
+            "status": "received",
+            "message": "We have already received your access request! We will notify you once approved.",
+            "request_id": existing.data[0]["id"]
+        }
+        
+    try:
+        res = admin.table("access_requests").insert({
+            "name": payload.name.strip(),
+            "email": email_clean,
+            "goals": payload.goals.strip(),
+            "status": "pending"
+        }).execute()
+        
+        return {
+            "status": "created",
+            "message": "Your request has been submitted successfully. The administrator will review and invite you via email.",
+            "data": res.data[0] if res.data else None
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to submit access request: {str(e)}")
+
+# ==========================================
+# ADMIN ENDPOINTS
+# ==========================================
+
+@app.get("/api/admin/stats")
+async def get_admin_stats(admin_user: dict = Depends(get_admin_user)):
+    """Summary dashboard statistics for admin."""
+    admin = get_supabase_admin()
+    
+    try:
+        profiles_res = admin.table("profiles").select("id, status, terms_agreed", count="exact").execute()
+        total_users = profiles_res.count if profiles_res.count is not None else len(profiles_res.data or [])
+        active_users = sum(1 for p in (profiles_res.data or []) if p.get("status") == "active")
+        terms_agreed_count = sum(1 for p in (profiles_res.data or []) if p.get("terms_agreed") is True)
+        
+        requests_res = admin.table("access_requests").select("id, status", count="exact").execute()
+        pending_requests = sum(1 for r in (requests_res.data or []) if r.get("status") == "pending")
+        
+        cvs_res = admin.table("job_applications").select("id", count="exact").execute()
+        total_altered_cvs = cvs_res.count if cvs_res.count is not None else len(cvs_res.data or [])
+        
+        return {
+            "total_users": total_users,
+            "active_users": active_users,
+            "pending_requests": pending_requests,
+            "total_altered_cvs": total_altered_cvs,
+            "terms_agreed_count": terms_agreed_count
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to fetch admin stats: {str(e)}")
+
+@app.get("/api/admin/requests")
+async def list_access_requests(admin_user: dict = Depends(get_admin_user)):
+    """Lists all access requests for admin review."""
+    admin = get_supabase_admin()
+    try:
+        res = admin.table("access_requests").select("*").order("created_at", desc=True).execute()
+        return {"requests": res.data or []}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to list access requests: {str(e)}")
+
+@app.post("/api/admin/requests/{request_id}/approve")
+async def approve_access_request(request_id: str, admin_user: dict = Depends(get_admin_user)):
+    """Approves an access request and triggers Supabase invite email."""
+    admin = get_supabase_admin()
+    
+    req_res = admin.table("access_requests").select("*").eq("id", request_id).execute()
+    if not req_res.data:
+        raise HTTPException(status_code=404, detail="Access request not found.")
+        
+    req = req_res.data[0]
+    email = req["email"]
+    name = req["name"]
+    
+    # Trigger Supabase Auth invite
+    invite_result = None
+    try:
+        # invite_user_by_email sends email to user with link to set password
+        invite_res = admin.auth.admin.invite_user_by_email(
+            email,
+            options={"data": {"name": name, "role": "user", "status": "invited"}}
+        )
+        if invite_res and invite_res.user:
+            invite_result = invite_res.user.id
+            # Upsert into profiles
+            admin.table("profiles").upsert({
+                "id": invite_res.user.id,
+                "email": email,
+                "name": name,
+                "role": "user",
+                "status": "invited",
+                "terms_agreed": false
+            }).execute()
+    except Exception as invite_err:
+        # If user already exists in auth, just update status
+        pass
+        
+    # Update request status to approved
+    admin.table("access_requests").update({"status": "approved"}).eq("id", request_id).execute()
+    
+    return {
+        "status": "approved",
+        "email": email,
+        "message": f"Approved access request for {name} ({email}) and sent invitation email."
+    }
+
+@app.post("/api/admin/requests/{request_id}/reject")
+async def reject_access_request(request_id: str, admin_user: dict = Depends(get_admin_user)):
+    """Rejects an access request."""
+    admin = get_supabase_admin()
+    try:
+        admin.table("access_requests").update({"status": "rejected"}).eq("id", request_id).execute()
+        return {"status": "rejected", "message": "Access request rejected."}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to reject request: {str(e)}")
+
+@app.get("/api/admin/users")
+async def list_users_usage(admin_user: dict = Depends(get_admin_user)):
+    """Lists all users with usage statistics (number of CVs tailored/generated, terms agreed)."""
+    admin = get_supabase_admin()
+    
+    try:
+        profiles_res = admin.table("profiles").select("*").order("created_at", desc=True).execute()
+        profiles = profiles_res.data or []
+        
+        # Get count of job_applications per user
+        apps_res = admin.table("job_applications").select("id, user_id").execute()
+        apps = apps_res.data or []
+        
+        # Count applications per user_id
+        usage_map = {}
+        for app in apps:
+            uid = app.get("user_id")
+            if uid:
+                usage_map[uid] = usage_map.get(uid, 0) + 1
+                
+        # Enrich profiles
+        enriched = []
+        for p in profiles:
+            uid = p.get("id")
+            enriched.append({
+                **p,
+                "cv_count": usage_map.get(uid, 0),
+                "is_admin": p.get("role") == "admin" or p.get("email") == ADMIN_EMAIL
+            })
+            
+        return {"users": enriched}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to list users: {str(e)}")
+
+@app.post("/api/admin/invite")
+async def direct_invite_user(payload: DirectInvitePayload, admin_user: dict = Depends(get_admin_user)):
+    """Directly invites a user by email & name from admin dashboard."""
+    admin = get_supabase_admin()
+    email_clean = payload.email.strip().lower()
+    name_clean = payload.name.strip()
+    
+    try:
+        invite_res = admin.auth.admin.invite_user_by_email(
+            email_clean,
+            options={"data": {"name": name_clean, "role": "user", "status": "invited"}}
+        )
+        
+        if invite_res and invite_res.user:
+            admin.table("profiles").upsert({
+                "id": invite_res.user.id,
+                "email": email_clean,
+                "name": name_clean,
+                "role": "user",
+                "status": "invited",
+                "terms_agreed": False
+            }).execute()
+            
+        return {
+            "status": "success",
+            "message": f"Invitation email sent to {email_clean}."
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to invite user: {str(e)}")
+
+@app.patch("/api/admin/users/{target_user_id}")
+async def update_user_status(
+    target_user_id: str,
+    payload: UpdateUserPayload,
+    admin_user: dict = Depends(get_admin_user)
+):
+    """Updates user status (active, invited, suspended) or role (admin, user)."""
+    admin = get_supabase_admin()
+    update_data = {}
+    if payload.status:
+        update_data["status"] = payload.status
+    if payload.role:
+        update_data["role"] = payload.role
+        
+    if not update_data:
+        return {"status": "noop"}
+        
+    try:
+        res = admin.table("profiles").update(update_data).eq("id", target_user_id).execute()
+        return {"status": "updated", "data": res.data[0] if res.data else update_data}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to update user: {str(e)}")
+
+@app.delete("/api/admin/users/{target_user_id}")
+async def delete_user(target_user_id: str, admin_user: dict = Depends(get_admin_user)):
+    """Deletes user from Supabase Auth and database."""
+    admin = get_supabase_admin()
+    
+    try:
+        # Delete from Supabase Auth (cascades to profiles)
+        admin.auth.admin.delete_user(target_user_id)
+        # Also ensure deleted from profiles
+        admin.table("profiles").delete().eq("id", target_user_id).execute()
+        return {"status": "deleted", "message": "User deleted successfully."}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to delete user: {str(e)}")
+
+# ==========================================
+# USER PROFILE & TERMS AGREEMENT
+# ==========================================
+
+@app.get("/api/user/profile")
+async def get_user_profile(current_user: dict = Depends(get_current_user)):
+    """Returns the current user's profile including role, status, and terms agreement."""
+    admin = get_supabase_admin()
+    try:
+        res = admin.table("profiles").select("*").eq("id", current_user["id"]).execute()
+        if res.data:
+            profile = res.data[0]
+            if current_user.get("email") == ADMIN_EMAIL:
+                profile["role"] = "admin"
+            return profile
+        return {
+            "id": current_user["id"],
+            "email": current_user["email"],
+            "role": "admin" if current_user.get("email") == ADMIN_EMAIL else "user",
+            "terms_agreed": False,
+            "status": "active"
+        }
+    except Exception as e:
+        return {
+            "id": current_user["id"],
+            "email": current_user["email"],
+            "role": "admin" if current_user.get("email") == ADMIN_EMAIL else "user",
+            "terms_agreed": False,
+            "status": "active"
+        }
+
+@app.post("/api/user/accept-terms")
+async def accept_terms(current_user: dict = Depends(get_current_user)):
+    """Records user agreement to Terms & Conditions."""
+    admin = get_supabase_admin()
+    now_iso = datetime.now(timezone.utc).isoformat()
+    
+    try:
+        admin.table("profiles").upsert({
+            "id": current_user["id"],
+            "email": current_user["email"],
+            "terms_agreed": True,
+            "terms_agreed_at": now_iso
+        }).execute()
+        return {"status": "success", "terms_agreed": True, "terms_agreed_at": now_iso}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to record terms agreement: {str(e)}")
+
+# ==========================================
+# CV & APPLICATION CORE ENDPOINTS
+# ==========================================
 
 # 1. POST /api/cv/upload
 @app.post("/api/cv/upload")
@@ -75,25 +396,18 @@ async def upload_cv(
     file: UploadFile = File(...),
     current_user: dict = Depends(get_current_user)
 ):
-    """
-    Accepts PDF/DOCX multipart upload, parses text, uploads raw file to 'cvs' bucket,
-    inserts row into cv_documents table, and returns parsed text + document id.
-    """
     user_id = current_user["id"]
     filename = file.filename or "cv_document.pdf"
     
-    # Read file bytes
     file_bytes = await file.read()
     if not file_bytes:
         raise HTTPException(status_code=400, detail="Uploaded file is empty.")
     
-    # Parse text
     try:
         parsed_text, content_type = extract_text_from_file(filename, file_bytes)
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Failed to parse CV: {str(e)}")
     
-    # Upload to Supabase Storage bucket 'cvs'
     file_id = str(uuid.uuid4())
     storage_path = f"{user_id}/{file_id}_{filename}"
     try:
@@ -101,7 +415,6 @@ async def upload_cv(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to upload CV to storage: {str(e)}")
     
-    # Insert record into cv_documents
     admin = get_supabase_admin()
     try:
         res = admin.table("cv_documents").insert({
@@ -128,13 +441,9 @@ async def create_application(
     payload: CreateApplicationRequest,
     current_user: dict = Depends(get_current_user)
 ):
-    """
-    Creates a job_applications row from cv_document_id + job title + job description text.
-    """
     user_id = current_user["id"]
     admin = get_supabase_admin()
     
-    # Verify cv_document belongs to user
     doc_res = admin.table("cv_documents").select("*").eq("id", payload.cv_document_id).eq("user_id", user_id).execute()
     if not doc_res.data:
         raise HTTPException(status_code=404, detail="CV document not found or unauthorized.")
@@ -144,6 +453,7 @@ async def create_application(
             "user_id": user_id,
             "cv_document_id": payload.cv_document_id,
             "job_title": payload.job_title,
+            "company_name": payload.company_name.strip() if payload.company_name else None,
             "job_description_text": payload.job_description_text
         }).execute()
         
@@ -154,20 +464,37 @@ async def create_application(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to save job application: {str(e)}")
 
-# 3. POST /api/applications/{id}/suggest
+# 3. DELETE /api/applications/{id}
+@app.delete("/api/applications/{application_id}")
+async def delete_application(
+    application_id: str,
+    current_user: dict = Depends(get_current_user)
+):
+    """Allows user to delete their application and history."""
+    user_id = current_user["id"]
+    admin = get_supabase_admin()
+    
+    # Check ownership
+    app_res = admin.table("job_applications").select("id").eq("id", application_id).eq("user_id", user_id).execute()
+    if not app_res.data:
+        raise HTTPException(status_code=404, detail="Application not found or unauthorized.")
+        
+    try:
+        # Delete application (cascades to suggested_changes and generated_cvs in DB)
+        admin.table("job_applications").delete().eq("id", application_id).execute()
+        return {"status": "deleted", "id": application_id}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to delete application: {str(e)}")
+
+# 4. POST /api/applications/{id}/suggest
 @app.post("/api/applications/{application_id}/suggest")
 async def generate_suggestions(
     application_id: str,
     current_user: dict = Depends(get_current_user)
 ):
-    """
-    Calls Gemini with structured prompt, parses JSON response,
-    inserts rows into suggested_changes (default checked = true), and returns them.
-    """
     user_id = current_user["id"]
     admin = get_supabase_admin()
     
-    # Fetch job application
     app_res = admin.table("job_applications").select("*, cv_documents(parsed_text)").eq("id", application_id).eq("user_id", user_id).execute()
     if not app_res.data:
         raise HTTPException(status_code=404, detail="Job application not found.")
@@ -179,7 +506,6 @@ async def generate_suggestions(
     cv_text = cv_doc.get("parsed_text", "")
     
     if not cv_text:
-        # Fallback query if join was not returned
         doc_res = admin.table("cv_documents").select("parsed_text").eq("id", app_data["cv_document_id"]).execute()
         if doc_res.data:
             cv_text = doc_res.data[0].get("parsed_text", "")
@@ -187,12 +513,10 @@ async def generate_suggestions(
     if not cv_text:
         raise HTTPException(status_code=400, detail="CV text could not be found for this application.")
         
-    # Check if suggestions already exist
     existing = admin.table("suggested_changes").select("*").eq("application_id", application_id).execute()
     if existing.data and len(existing.data) > 0:
         return {"suggestions": existing.data}
         
-    # Generate suggestions via Gemini
     try:
         suggestions = generate_cv_suggestions(
             cv_text=cv_text,
@@ -202,7 +526,6 @@ async def generate_suggestions(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"AI Suggestion generation failed: {str(e)}")
         
-    # Insert suggestions into database
     records_to_insert = [
         {
             "application_id": application_id,
@@ -222,21 +545,16 @@ async def generate_suggestions(
     else:
         return {"suggestions": []}
 
-# 4. PATCH /api/changes/{id}
+# 5. PATCH /api/changes/{id}
 @app.patch("/api/changes/{change_id}")
 async def update_change(
     change_id: str,
     payload: UpdateChangeRequest,
     current_user: dict = Depends(get_current_user)
 ):
-    """
-    Updates a single suggestion's checked boolean and/or final_text (inline edit).
-    Fast and idempotent.
-    """
     user_id = current_user["id"]
     admin = get_supabase_admin()
     
-    # Verify change belongs to user
     change_res = admin.table("suggested_changes").select("*, job_applications(user_id)").eq("id", change_id).execute()
     if not change_res.data:
         raise HTTPException(status_code=404, detail="Suggestion item not found.")
@@ -261,21 +579,15 @@ async def update_change(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to update change: {str(e)}")
 
-# 5. POST /api/applications/{id}/generate
+# 6. POST /api/applications/{id}/generate
 @app.post("/api/applications/{application_id}/generate")
 async def generate_cv(
     application_id: str,
     current_user: dict = Depends(get_current_user)
 ):
-    """
-    Takes all suggested_changes rows where checked = true, applies final_text/suggested_text
-    to the original parsed CV text, renders a new PDF using reportlab, uploads to 'generated'
-    bucket, inserts generated_cvs row, and returns signed download URL.
-    """
     user_id = current_user["id"]
     admin = get_supabase_admin()
     
-    # Fetch job application and cv parsed text
     app_res = admin.table("job_applications").select("*, cv_documents(parsed_text, filename)").eq("id", application_id).eq("user_id", user_id).execute()
     if not app_res.data:
         raise HTTPException(status_code=404, detail="Job application not found.")
@@ -294,17 +606,14 @@ async def generate_cv(
     if not cv_text:
         raise HTTPException(status_code=400, detail="CV text is missing.")
         
-    # Fetch approved changes (checked = True)
     changes_res = admin.table("suggested_changes").select("*").eq("application_id", application_id).eq("checked", True).execute()
     approved_changes = changes_res.data or []
     
-    # Generate new PDF bytes
     try:
         pdf_bytes = generate_tailored_pdf(cv_text, approved_changes)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"PDF rendering failed: {str(e)}")
         
-    # Upload to Supabase Storage bucket 'generated'
     gen_id = str(uuid.uuid4())
     clean_title = "".join(c for c in app_data.get("job_title", "tailored") if c.isalnum() or c in (' ', '_', '-')).strip().replace(' ', '_')
     gen_filename = f"CV_Tailored_{clean_title}_{gen_id[:8]}.pdf"
@@ -315,9 +624,8 @@ async def generate_cv(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to store generated PDF: {str(e)}")
         
-    # Insert record into generated_cvs
     try:
-        cv_record = admin.table("generated_cvs").insert({
+        admin.table("generated_cvs").insert({
             "id": gen_id,
             "application_id": application_id,
             "storage_path": storage_path
@@ -325,7 +633,6 @@ async def generate_cv(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Database record insertion failed: {str(e)}")
         
-    # Generate signed download URL (valid for 1 hour)
     try:
         download_url = create_signed_download_url("generated", storage_path, expires_in=3600)
     except Exception as e:
@@ -338,15 +645,12 @@ async def generate_cv(
         "filename": gen_filename
     }
 
-# 6. GET /api/applications/{id}
+# 7. GET /api/applications/{id}
 @app.get("/api/applications/{application_id}")
 async def get_application_details(
     application_id: str,
     current_user: dict = Depends(get_current_user)
 ):
-    """
-    Fetches job application details, cv doc info, suggested changes, and generated cvs.
-    """
     user_id = current_user["id"]
     admin = get_supabase_admin()
     
@@ -356,13 +660,9 @@ async def get_application_details(
         
     app_data = app_res.data[0]
     
-    # Get suggested changes
     changes_res = admin.table("suggested_changes").select("*").eq("application_id", application_id).order("created_at").execute()
-    
-    # Get generated cvs
     gen_res = admin.table("generated_cvs").select("*").eq("application_id", application_id).order("created_at", desc=True).execute()
     
-    # Get signed url for generated cv if exists
     generated_cvs = gen_res.data or []
     for gen in generated_cvs:
         try:

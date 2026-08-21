@@ -172,6 +172,19 @@ async def list_access_requests(admin_user: dict = Depends(get_admin_user)):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to list access requests: {str(e)}")
 
+def get_app_site_url() -> str:
+    """Returns the base URL of the Next.js app for auth redirects."""
+    explicit_url = os.getenv("NEXT_PUBLIC_SITE_URL") or os.getenv("APP_URL")
+    if explicit_url:
+        return explicit_url.rstrip("/")
+    vercel_prod = os.getenv("VERCEL_PROJECT_PRODUCTION_URL")
+    if vercel_prod:
+        return f"https://{vercel_prod.rstrip('/')}"
+    vercel_url = os.getenv("VERCEL_URL")
+    if vercel_url:
+        return f"https://{vercel_url.rstrip('/')}"
+    return "http://localhost:3000"
+
 @app.post("/api/admin/requests/{request_id}/approve")
 async def approve_access_request(request_id: str, admin_user: dict = Depends(get_admin_user)):
     admin = get_supabase_admin()
@@ -183,11 +196,17 @@ async def approve_access_request(request_id: str, admin_user: dict = Depends(get
     req = req_res.data[0]
     email = req["email"]
     name = req["name"]
+    site_url = get_app_site_url()
+    redirect_url = f"{site_url}/auth/callback?next=/set-password"
     
+    direct_link = None
     try:
         invite_res = admin.auth.admin.invite_user_by_email(
             email,
-            options={"data": {"name": name, "role": "user", "status": "invited"}}
+            options={
+                "data": {"name": name, "role": "user", "status": "invited"},
+                "redirect_to": redirect_url
+            }
         )
         if invite_res and invite_res.user:
             admin.table("profiles").upsert({
@@ -198,8 +217,8 @@ async def approve_access_request(request_id: str, admin_user: dict = Depends(get
                 "status": "invited",
                 "terms_agreed": False
             }).execute()
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"Invite email notice: {e}")
         
     admin.table("access_requests").update({"status": "approved"}).eq("id", request_id).execute()
     
@@ -253,11 +272,16 @@ async def direct_invite_user(payload: DirectInvitePayload, admin_user: dict = De
     admin = get_supabase_admin()
     email_clean = payload.email.strip().lower()
     name_clean = payload.name.strip()
+    site_url = get_app_site_url()
+    redirect_url = f"{site_url}/auth/callback?next=/set-password"
     
     try:
         invite_res = admin.auth.admin.invite_user_by_email(
             email_clean,
-            options={"data": {"name": name_clean, "role": "user", "status": "invited"}}
+            options={
+                "data": {"name": name_clean, "role": "user", "status": "invited"},
+                "redirect_to": redirect_url
+            }
         )
         
         if invite_res and invite_res.user:

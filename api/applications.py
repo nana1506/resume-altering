@@ -61,6 +61,8 @@ async def delete_application(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to delete application: {str(e)}")
 
+from api.services.parser import ParsedCV, structure_cv_text, cv_to_plain_text
+
 # 3. POST /api/applications/{application_id}/suggest
 @app.post("/api/applications/{application_id}/suggest")
 async def generate_suggestions(
@@ -70,7 +72,7 @@ async def generate_suggestions(
     user_id = current_user["id"]
     admin = get_supabase_admin()
     
-    app_res = admin.table("job_applications").select("*, cv_documents(parsed_text)").eq("id", application_id).eq("user_id", user_id).execute()
+    app_res = admin.table("job_applications").select("*, cv_documents(parsed_text, parsed_structure)").eq("id", application_id).eq("user_id", user_id).execute()
     if not app_res.data:
         raise HTTPException(status_code=404, detail="Job application not found.")
         
@@ -79,19 +81,32 @@ async def generate_suggestions(
     job_description = app_data.get("job_description_text", "")
     cv_doc = app_data.get("cv_documents") or {}
     cv_text = cv_doc.get("parsed_text", "")
+    parsed_structure = cv_doc.get("parsed_structure")
     
-    if not cv_text:
-        doc_res = admin.table("cv_documents").select("parsed_text").eq("id", app_data["cv_document_id"]).execute()
+    if not cv_text and not parsed_structure:
+        doc_res = admin.table("cv_documents").select("parsed_text, parsed_structure").eq("id", app_data["cv_document_id"]).execute()
         if doc_res.data:
             cv_text = doc_res.data[0].get("parsed_text", "")
+            parsed_structure = doc_res.data[0].get("parsed_structure")
             
-    if not cv_text:
+    if not cv_text and not parsed_structure:
         raise HTTPException(status_code=400, detail="CV text could not be found for this application.")
         
+    # Prepare structured representation for high-fidelity LLM prompt
+    if parsed_structure:
+        try:
+            structured_obj = ParsedCV(**parsed_structure)
+            formatted_cv_prompt_text = cv_to_plain_text(structured_obj)
+        except Exception:
+            formatted_cv_prompt_text = cv_text
+    else:
+        structured_obj = structure_cv_text(cv_text)
+        formatted_cv_prompt_text = cv_to_plain_text(structured_obj)
+
     # Generate structured analysis via Gemini
     try:
         analysis = generate_cv_suggestions(
-            cv_text=cv_text,
+            cv_text=formatted_cv_prompt_text,
             job_title=job_title,
             job_description=job_description
         )
@@ -123,11 +138,12 @@ async def generate_suggestions(
             "suggestions": existing.data
         }
 
-    # Insert suggestions
+    # Insert suggestions with entry_index
     records_to_insert = [
         {
             "application_id": application_id,
             "section": item.section,
+            "entry_index": getattr(item, "entry_index", -1),
             "original_text": item.original_text,
             "suggested_text": item.suggested_text,
             "reason": item.reason,
@@ -139,8 +155,15 @@ async def generate_suggestions(
     
     inserted_suggestions = []
     if records_to_insert:
-        insert_res = admin.table("suggested_changes").insert(records_to_insert).execute()
-        inserted_suggestions = insert_res.data or []
+        try:
+            insert_res = admin.table("suggested_changes").insert(records_to_insert).execute()
+            inserted_suggestions = insert_res.data or []
+        except Exception:
+            # Fallback if entry_index column is not yet in Supabase table
+            for r in records_to_insert:
+                r.pop("entry_index", None)
+            insert_res = admin.table("suggested_changes").insert(records_to_insert).execute()
+            inserted_suggestions = insert_res.data or []
         
     return {
         "match_score": analysis.match_score,
@@ -194,29 +217,33 @@ async def generate_cv(
     user_id = current_user["id"]
     admin = get_supabase_admin()
     
-    app_res = admin.table("job_applications").select("*, cv_documents(parsed_text, filename)").eq("id", application_id).eq("user_id", user_id).execute()
+    app_res = admin.table("job_applications").select("*, cv_documents(parsed_text, parsed_structure, filename)").eq("id", application_id).eq("user_id", user_id).execute()
     if not app_res.data:
         raise HTTPException(status_code=404, detail="Job application not found.")
         
     app_data = app_res.data[0]
     cv_doc = app_data.get("cv_documents") or {}
     cv_text = cv_doc.get("parsed_text", "")
+    parsed_structure = cv_doc.get("parsed_structure")
     orig_filename = cv_doc.get("filename", "cv.pdf")
     
-    if not cv_text:
-        doc_res = admin.table("cv_documents").select("parsed_text, filename").eq("id", app_data["cv_document_id"]).execute()
+    if not cv_text and not parsed_structure:
+        doc_res = admin.table("cv_documents").select("parsed_text, parsed_structure, filename").eq("id", app_data["cv_document_id"]).execute()
         if doc_res.data:
             cv_text = doc_res.data[0].get("parsed_text", "")
+            parsed_structure = doc_res.data[0].get("parsed_structure")
             orig_filename = doc_res.data[0].get("filename", "cv.pdf")
             
-    if not cv_text:
+    if not cv_text and not parsed_structure:
         raise HTTPException(status_code=400, detail="CV text is missing.")
         
     changes_res = admin.table("suggested_changes").select("*").eq("application_id", application_id).eq("checked", True).execute()
     approved_changes = changes_res.data or []
     
     try:
-        pdf_bytes = generate_tailored_pdf(cv_text, approved_changes)
+        # Use structured CV representation if available, otherwise parse text
+        source_data = parsed_structure if parsed_structure else cv_text
+        pdf_bytes = generate_tailored_pdf(source_data, approved_changes, template_mode="input")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"PDF rendering failed: {str(e)}")
         

@@ -2,7 +2,7 @@ import uuid
 from fastapi import FastAPI, UploadFile, File, HTTPException, Depends
 from api._shared.auth import setup_cors, get_current_user
 from api.services.supabase_client import get_supabase_admin, upload_file_to_storage
-from api.services.parser import extract_text_from_file
+from api.services.parser import parse_file_to_structured_cv
 
 app = FastAPI(title="CV Tailor CV API", version="2.3.0")
 setup_cors(app)
@@ -20,7 +20,7 @@ async def upload_cv(
         raise HTTPException(status_code=400, detail="Uploaded file is empty.")
     
     try:
-        parsed_text, content_type = extract_text_from_file(filename, file_bytes)
+        parsed_text, parsed_cv, content_type = parse_file_to_structured_cv(filename, file_bytes)
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Failed to parse CV: {str(e)}")
     
@@ -33,20 +33,23 @@ async def upload_cv(
     
     admin = get_supabase_admin()
     try:
-        res = admin.table("cv_documents").insert({
+        insert_payload = {
             "id": file_id,
             "user_id": user_id,
             "filename": filename,
             "storage_path": storage_path,
-            "parsed_text": parsed_text
-        }).execute()
+            "parsed_text": parsed_text,
+            "parsed_structure": parsed_cv.model_dump()
+        }
+        res = admin.table("cv_documents").insert(insert_payload).execute()
         
         doc_record = res.data[0] if res.data else {"id": file_id}
         return {
             "cv_document_id": doc_record["id"],
             "filename": filename,
             "storage_path": storage_path,
-            "parsed_text": parsed_text
+            "parsed_text": parsed_text,
+            "parsed_structure": parsed_cv.model_dump()
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Database insertion failed: {str(e)}")

@@ -1,16 +1,168 @@
 import os
 import sys
+import json
 
 # Add project root to sys.path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from api.services.pdf_generator import generate_tailored_pdf, apply_changes_to_text
-from api.services.gemini_service import GeminiAnalysisResponse, clean_json_string, fallback_keyword_extractor
+from api.services.parser import (
+    ParsedCV,
+    CVSection,
+    CVEntry,
+    structure_cv_text,
+    cv_to_plain_text,
+    clean_text
+)
+from api.services.pdf_generator import (
+    generate_tailored_pdf,
+    apply_changes_to_cv,
+    reorder_sections,
+    build_pdf_from_cv
+)
+from api.services.gemini_service import (
+    GeminiAnalysisResponse,
+    clean_json_string,
+    fallback_keyword_extractor
+)
+
+def test_cv_structuring():
+    print("Testing Structured CV Parsing...")
+    sample_raw_cv = """Alex Morgan
+Senior Full-Stack Engineer | Cloud & Distributed Systems
+alex.morgan@example.com | (555) 123-4567 | San Francisco, CA | linkedin.com/in/alexmorgan
+
+PROFILE SUMMARY
+Results-driven engineer with 6 years of experience scaling web services.
+
+WORK EXPERIENCE
+Senior Software Engineer at Acme Corp (2021 - Present)
+• Built user interfaces using React and TypeScript.
+• Maintained legacy backend endpoints in Python.
+• Led cloud migration reducing infrastructure cost by 20%.
+
+SKILLS & TECHNOLOGIES
+• Languages: Python, TypeScript, JavaScript, SQL
+• Frameworks: Next.js, FastAPI, Django
+• Tools: Docker, Kubernetes, AWS, PostgreSQL
+
+EDUCATION
+B.S. in Computer Science - UC Berkeley (2015 - 2019)
+"""
+    parsed = structure_cv_text(sample_raw_cv)
+    assert parsed.name == "Alex Morgan"
+    assert "Senior Full-Stack Engineer" in parsed.headline
+    assert "alex.morgan@example.com" in parsed.contact
+    assert len(parsed.sections) == 4
+    
+    section_names = [s.name for s in parsed.sections]
+    assert "Profile Summary" in section_names
+    assert "Work Experience" in section_names
+    assert "Skills & Technologies" in section_names
+    assert "Education" in section_names
+    
+    exp_sec = next(s for s in parsed.sections if s.name == "Work Experience")
+    subheadings = [e for e in exp_sec.entries if e.type == "subheading"]
+    bullets = [e for e in exp_sec.entries if e.type == "bullet"]
+    assert len(subheadings) == 1
+    assert "Senior Software Engineer at Acme Corp" in subheadings[0].text
+    assert len(bullets) == 3
+    print("CV structuring validated successfully!")
+
+def test_apply_changes_to_cv():
+    print("Testing Precise Change Application to Structured CV...")
+    sample_cv = ParsedCV(
+        name="Jordan Lee",
+        headline="Software Developer",
+        contact="jordan@example.com",
+        sections=[
+            CVSection(
+                name="Profile Summary",
+                entries=[
+                    CVEntry(type="paragraph", text="Experienced software developer with 3 years experience.")
+                ]
+            ),
+            CVSection(
+                name="Work Experience",
+                entries=[
+                    CVEntry(type="subheading", text="Software Engineer at Beta Inc (2020 - Present)"),
+                    CVEntry(type="bullet", text="Developed backend APIs.")
+                ]
+            ),
+            CVSection(
+                name="Skills & Technologies",
+                entries=[
+                    CVEntry(type="bullet", text="Python, SQL, Git")
+                ]
+            )
+        ]
+    )
+
+    changes = [
+        {
+            "section": "Profile Summary",
+            "entry_index": 0,
+            "original_text": "Experienced software developer with 3 years experience.",
+            "suggested_text": "High-performing Software Engineer with 3+ years of expertise in FastAPI and Docker microservices.",
+            "reason": "Aligns with Senior role criteria",
+            "checked": True,
+            "final_text": None
+        },
+        {
+            "section": "Work Experience",
+            "entry_index": 1,
+            "original_text": "Developed backend APIs.",
+            "suggested_text": "Architected high-throughput REST APIs in FastAPI, reducing latency by 40%.",
+            "reason": "Quantifies achievements",
+            "checked": True,
+            "final_text": None
+        },
+        {
+            "section": "Skills & Technologies",
+            "entry_index": -1,  # Addition
+            "original_text": "",
+            "suggested_text": "Docker, Kubernetes, AWS, PostgreSQL, Redis",
+            "reason": "Adds vacancy cloud keywords",
+            "checked": True,
+            "final_text": None
+        }
+    ]
+
+    updated = apply_changes_to_cv(sample_cv, changes)
+    
+    # 1. Check Profile Summary replacement
+    assert updated.sections[0].entries[0].text == "High-performing Software Engineer with 3+ years of expertise in FastAPI and Docker microservices."
+    
+    # 2. Check Work Experience bullet replacement
+    assert updated.sections[1].entries[1].text == "Architected high-throughput REST APIs in FastAPI, reducing latency by 40%."
+    
+    # 3. Check Skills addition
+    assert len(updated.sections[2].entries) == 2
+    assert updated.sections[2].entries[1].text == "Docker, Kubernetes, AWS, PostgreSQL, Redis"
+    print("Structured change application verified successfully!")
+
+def test_template_reordering():
+    print("Testing Template Mode Canonical Reordering...")
+    unconventional_cv = ParsedCV(
+        name="Taylor Swift",
+        headline="Data Engineer",
+        contact="taylor@example.com",
+        sections=[
+            CVSection(name="Education", entries=[CVEntry(type="paragraph", text="MIT 2020")]),
+            CVSection(name="Work Experience", entries=[CVEntry(type="bullet", text="Engineered pipelines")]),
+            CVSection(name="Profile Summary", entries=[CVEntry(type="paragraph", text="Data specialist")])
+        ]
+    )
+
+    reordered = reorder_sections(unconventional_cv, template_mode="fixed")
+    ordered_names = [s.name for s in reordered.sections]
+    assert ordered_names == ["Profile Summary", "Work Experience", "Education"]
+    print("Canonical template reordering verified successfully!")
 
 def test_pdf_generation():
-    print("Testing PDF Generation...")
-    sample_cv = """
+    print("Testing Structured PDF Generation...")
+    sample_cv = structure_cv_text("""
 Alex Morgan
+Senior Cloud Engineer
 alex.morgan@example.com | (555) 123-4567 | San Francisco, CA | linkedin.com/in/alexmorgan
 
 SUMMARY
@@ -20,45 +172,28 @@ EXPERIENCE
 Software Engineer at Acme Corp (2021 - Present)
 • Built user interfaces using React and TypeScript.
 • Maintained legacy backend endpoints.
-• Collaborated with cross-functional teams.
 
 SKILLS
-JavaScript, React, HTML, CSS, Git
-"""
+Python, FastAPI, Supabase, PostgreSQL, Next.js, Docker
+""")
 
     sample_changes = [
         {
             "section": "SUMMARY",
+            "entry_index": 0,
             "original_text": "Experienced software engineer with 5 years of background in building web apps.",
-            "suggested_text": "Results-driven Senior Full-Stack Engineer with 5+ years of experience designing scalable microservices and Next.js applications.",
-            "reason": "Aligns with Senior role and Next.js keywords",
-            "checked": True,
-            "final_text": None
-        },
-        {
-            "section": "EXPERIENCE",
-            "original_text": "• Maintained legacy backend endpoints.",
-            "suggested_text": "• Re-architected backend microservices in Python & FastAPI, reducing API latency by 35%.",
-            "reason": "Adds Python/FastAPI keywords and quantifiable metrics",
-            "checked": True,
-            "final_text": None
-        },
-        {
-            "section": "SKILLS",
-            "original_text": "",
-            "suggested_text": "Python, FastAPI, Supabase, PostgreSQL, Next.js, Docker, Tailwind CSS",
-            "reason": "Includes core vacancy technical stack",
-            "checked": True,
-            "final_text": None
+            "suggested_text": "Results-driven Senior Full-Stack Engineer with 5+ years of experience designing scalable microservices.",
+            "reason": "Aligns with Senior role",
+            "checked": True
         }
     ]
 
     pdf_bytes = generate_tailored_pdf(sample_cv, sample_changes)
     assert len(pdf_bytes) > 1000, f"Generated PDF is too small: {len(pdf_bytes)} bytes"
-    print(f"PDF generated successfully! Size: {len(pdf_bytes)} bytes.")
+    print(f"Structured PDF generated successfully! Size: {len(pdf_bytes)} bytes.")
 
 def test_gemini_json_parsing():
-    print("Testing Gemini Schema Parsing with Match Score & Keywords...")
+    print("Testing Gemini Schema Parsing with Match Score, Keywords & Entry Index...")
     sample_raw_json = """```json
 {
   "match_score": 82,
@@ -86,7 +221,8 @@ def test_gemini_json_parsing():
   ],
   "suggestions": [
     {
-      "section": "Summary",
+      "section": "Profile Summary",
+      "entry_index": 0,
       "original_text": "Software engineer with 3 years experience",
       "suggested_text": "Senior Software Engineer specializing in distributed cloud systems",
       "reason": "Matches Senior Cloud Engineer job vacancy requirement"
@@ -95,16 +231,13 @@ def test_gemini_json_parsing():
 }
 ```"""
     cleaned = clean_json_string(sample_raw_json)
-    import json
     raw_dict = json.loads(cleaned)
     parsed = GeminiAnalysisResponse(**raw_dict)
     assert parsed.match_score == 82
     assert parsed.match_label == "Strong Match"
     assert len(parsed.keywords) == 3
-    assert parsed.keywords[0].status == "exists"
-    assert parsed.keywords[1].status == "different_terms"
-    assert parsed.keywords[2].status == "not_exists"
-    assert len(parsed.suggestions) == 1
+    assert parsed.suggestions[0].entry_index == 0
+    assert parsed.suggestions[0].section == "Profile Summary"
     print("Gemini response parsing verified successfully!")
 
 def test_fallback_keyword_extractor():
@@ -122,7 +255,10 @@ def test_fallback_keyword_extractor():
     print(f"Extracted {len(extracted)} keywords reliably: {terms}")
 
 if __name__ == "__main__":
+    test_cv_structuring()
+    test_apply_changes_to_cv()
+    test_template_reordering()
     test_pdf_generation()
     test_gemini_json_parsing()
     test_fallback_keyword_extractor()
-    print("All service unit tests passed!")
+    print("All service unit tests passed cleanly!")

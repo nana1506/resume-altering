@@ -17,8 +17,9 @@ class KeywordItem(BaseModel):
     details: str = Field(..., description="Brief explanation, e.g. 'Present in Experience section', 'CV uses Next.js for React Frameworks', or 'Missing from resume; added in suggestions below'")
 
 class SuggestionItem(BaseModel):
-    section: str = Field(..., description="The CV section this applies to (e.g., 'Summary', 'Skills', 'Experience - Company X')")
-    original_text: str = Field(default="", description="Verbatim excerpt from the original CV, or empty string if it's a new bullet point / addition")
+    section: str = Field(..., description="The CV section this applies to (e.g., 'Profile Summary', 'Skills & Technologies', 'Work Experience')")
+    entry_index: Optional[int] = Field(default=-1, description="Index into that section's entries list; -1 or omitted = new entry (addition)")
+    original_text: str = Field(default="", description="Verbatim excerpt from the original CV entry, or empty string if it's a new bullet point / addition")
     suggested_text: str = Field(..., description="The proposed replacement or addition with keyword/skill alignment")
     reason: str = Field(..., description="Explanation of which job vacancy requirement or skill keyword this addresses")
 
@@ -105,7 +106,7 @@ def generate_cv_suggestions(cv_text: str, job_title: str, job_description: str) 
 You are an expert ATS (Applicant Tracking System) CV auditor and talent acquisition specialist.
 Your task is to conduct an in-depth keyword gap analysis and optimization for the target job: "{job_title}".
 
-CANDIDATE'S ORIGINAL CV:
+CANDIDATE'S ORIGINAL CV (Structured with Section & Entry Index headers):
 \"\"\"
 {cv_text}
 \"\"\"
@@ -115,24 +116,19 @@ TARGET JOB VACANCY & REQUIREMENTS:
 {job_description}
 \"\"\"
 
-CRITICAL KEYWORD EXTRACTION RULES:
+CRITICAL KEYWORD & SUGGESTION RULES:
 1. You MUST extract between 8 and 20 distinct, essential keywords from the job vacancy.
-   These MUST include:
-   - Core hard skills (e.g. programming languages, data modeling, analytical skills, leadership)
-   - Primary tools, frameworks, and technologies (e.g. React, PostgreSQL, Docker, AWS, Figma, Python)
-   - Key domain experiences and methodologies (e.g. CI/CD, Agile Scrum, Microservices, System Architecture, Cross-functional collaboration)
-   - Essential qualifications or degree requirements
-2. DO NOT return an empty keywords array. Every job description has explicit and implicit key requirements.
+   These MUST include core hard skills, primary tools & frameworks, domain experience, and qualifications.
+2. DO NOT return an empty keywords array.
 3. For each extracted keyword, evaluate its status relative to the candidate's CV:
-   - "exists": The skill or term is explicitly stated in the CV.
-   - "different_terms": The candidate shows this capability but uses alternative, synonymous, or broader phrasing (e.g. CV mentions "FastAPI / Flask" for "Python backend frameworks", or "PostgreSQL" for "Relational Databases").
-   - "not_exists": The skill or requirement is completely absent in the CV.
-4. Calculate an overall ATS match score (0 - 100 percentage) and assign a match label:
-   - "Strong Match" (80% - 100%)
-   - "Moderate Match" (60% - 79%)
-   - "Low Match" (below 60%)
-5. Write a concise executive match_summary explaining the alignment strengths and the primary gap areas.
-6. Provide precise, actionable section-by-section bullet suggestions (in 'Summary', 'Skills', 'Experience', etc.) to directly address the "not_exists" and "different_terms" keyword gaps.
+   - "exists": Explicitly stated in the CV.
+   - "different_terms": Present under alternative or synonymous phrasing.
+   - "not_exists": Completely absent in the CV.
+4. Calculate an overall ATS match score (0 - 100 percentage) and assign a match label.
+5. Provide precise, actionable section-by-section bullet suggestions.
+   - Specify the exact "section" (e.g. "Profile Summary", "Work Experience", "Skills & Technologies").
+   - If replacing or improving an existing line, specify its 0-based "entry_index" in that section and include the verbatim "original_text".
+   - If adding a new bullet point to a section, set "entry_index": -1 and "original_text": "".
 
 You MUST return ONLY valid JSON matching this schema:
 {{
@@ -162,7 +158,8 @@ You MUST return ONLY valid JSON matching this schema:
   ],
   "suggestions": [
     {{
-      "section": "Professional Summary",
+      "section": "Profile Summary",
+      "entry_index": 0,
       "original_text": "Software engineer with background in web development.",
       "suggested_text": "Full-Stack Software Engineer with expertise in Python, FastAPI, and Dockerized microservices.",
       "reason": "Incorporates missing Docker and Python keywords to match ATS criteria."

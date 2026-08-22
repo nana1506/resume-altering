@@ -53,8 +53,9 @@ export default function DashboardPage() {
   const router = useRouter();
 
   const loadApplications = useCallback(async () => {
+    if (!user) return;
     try {
-      // Fetch applications with joined cv_documents, suggestions, and generated cvs
+      // Fetch applications strictly for the active user with joined cv_documents, suggestions, and generated cvs
       const { data, error } = await supabase
         .from('job_applications')
         .select(`
@@ -76,6 +77,7 @@ export default function DashboardPage() {
             storage_path
           )
         `)
+        .eq('user_id', user.id)
         .order('created_at', { ascending: false });
 
       if (error) {
@@ -88,7 +90,7 @@ export default function DashboardPage() {
     } finally {
       setLoading(false);
     }
-  }, [supabase]);
+  }, [supabase, user]);
 
   useEffect(() => {
     if (authLoading) return;

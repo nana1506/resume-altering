@@ -1,5 +1,7 @@
 import Link from 'next/link';
 import { Sparkles, CheckCircle2, ArrowRight, Upload, Wand2, Download, ShieldCheck, FileCheck, Lock } from 'lucide-react';
+import ScorePreview from '@/components/landing/ScorePreview';
+import HistoryPreview from '@/components/landing/HistoryPreview';
 
 export default function HomePage() {
   return (
@@ -66,6 +68,45 @@ export default function HomePage() {
           <p className="text-sm text-slate-600 leading-relaxed">
             Approved changes are formatted into an ATS-friendly, clean PDF available via signed storage download.
           </p>
+        </div>
+      </section>
+
+      {/* Product Previews Section */}
+      <section className="max-w-5xl mx-auto space-y-8">
+        <div className="text-center space-y-2">
+          <div className="inline-flex items-center gap-2 px-3.5 py-1 rounded-full bg-slate-100 border border-slate-200 text-slate-700 text-xs font-semibold">
+            <Sparkles className="w-3.5 h-3.5 text-indigo-600" />
+            <span>See it in action</span>
+          </div>
+          <h2 className="text-2xl sm:text-3xl font-bold text-slate-900 tracking-tight">
+            Experience the intelligence before you apply
+          </h2>
+          <p className="text-sm text-slate-600 max-w-xl mx-auto">
+            Discover how real-time keyword analysis and progress tracking elevate your resume for top-tier hiring pipelines.
+          </p>
+        </div>
+
+        {/* Previews Grid */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <ScorePreview />
+          <HistoryPreview />
+        </div>
+
+        {/* Mid-page Call to Action */}
+        <div className="flex flex-col sm:flex-row items-center justify-center gap-4 pt-2">
+          <Link
+            href="/request-access"
+            className="w-full sm:w-auto px-7 py-3.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-medium shadow-lg shadow-indigo-500/25 transition-all flex items-center justify-center gap-2 text-base group"
+          >
+            <span>Request Access Invite</span>
+            <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
+          </Link>
+          <Link
+            href="/login"
+            className="w-full sm:w-auto px-7 py-3.5 rounded-xl bg-white hover:bg-slate-50 border border-slate-200 text-slate-700 font-medium transition-colors flex items-center justify-center text-base shadow-sm"
+          >
+            Sign In with Invite
+          </Link>
         </div>
       </section>
 

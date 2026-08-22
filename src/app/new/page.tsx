@@ -2,13 +2,13 @@
 
 export const dynamic = 'force-dynamic';
 
-import { useState, useRef, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { fetchWithAuth } from '@/lib/api';
 import { useAuth } from '@/context/AuthContext';
 import TermsModal from '@/components/TermsModal';
+import CvUploadInput from '@/components/cv/CvUploadInput';
 import { 
-  Upload, 
   FileText, 
   Sparkles, 
   Briefcase, 
@@ -16,23 +16,34 @@ import {
   CheckCircle2, 
   AlertCircle, 
   Loader2, 
-  X, 
-  ArrowRight 
+  ArrowRight,
+  BookmarkCheck,
+  Upload,
+  Calendar
 } from 'lucide-react';
+
+interface ProfileCvData {
+  id: string;
+  filename: string;
+  created_at: string;
+}
 
 export default function NewApplicationPage() {
   const { profile } = useAuth();
+  const [profileCv, setProfileCv] = useState<ProfileCvData | null>(null);
+  const [loadingCv, setLoadingCv] = useState(true);
+  const [cvChoice, setCvChoice] = useState<'saved' | 'upload'>('upload');
+  const [saveToProfile, setSaveToProfile] = useState(false);
   const [file, setFile] = useState<File | null>(null);
+
   const [jobTitle, setJobTitle] = useState('');
   const [companyName, setCompanyName] = useState('');
   const [jobDescription, setJobDescription] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [currentStep, setCurrentStep] = useState<'idle' | 'uploading' | 'creating' | 'analyzing'>('idle');
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
-  const [isDragOver, setIsDragOver] = useState(false);
   const [showTermsModal, setShowTermsModal] = useState(false);
 
-  const fileInputRef = useRef<HTMLInputElement>(null);
   const router = useRouter();
 
   useEffect(() => {
@@ -41,48 +52,41 @@ export default function NewApplicationPage() {
     }
   }, [profile]);
 
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files && e.target.files[0]) {
-      const selectedFile = e.target.files[0];
-      validateAndSetFile(selectedFile);
-    }
-  };
+  useEffect(() => {
+    const checkProfileCv = async () => {
+      try {
+        setLoadingCv(true);
+        const res = await fetchWithAuth('/api/user/cv');
+        if (res.has_profile_cv && res.cv) {
+          setProfileCv(res.cv);
+          setCvChoice('saved');
+          setSaveToProfile(false); // deliberate opt-in if uploading different one
+        } else {
+          setProfileCv(null);
+          setCvChoice('upload');
+          setSaveToProfile(true); // default checked for frictionless first save
+        }
+      } catch (err) {
+        console.error('Failed to check profile CV:', err);
+        setCvChoice('upload');
+        setSaveToProfile(true);
+      } finally {
+        setLoadingCv(false);
+      }
+    };
 
-  const validateAndSetFile = (f: File) => {
-    const validTypes = [
-      'application/pdf',
-      'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-      'text/plain'
-    ];
-    const isDocx = f.name.toLowerCase().endsWith('.docx');
-    const isPdf = f.name.toLowerCase().endsWith('.pdf');
-
-    if (!validTypes.includes(f.type) && !isDocx && !isPdf) {
-      setErrorMsg('Please upload a valid PDF or DOCX resume document.');
-      return;
-    }
-
-    if (f.size > 10 * 1024 * 1024) {
-      setErrorMsg('File size exceeds 10MB limit.');
-      return;
-    }
-
-    setErrorMsg(null);
-    setFile(f);
-  };
-
-  const handleDrop = (e: React.DragEvent) => {
-    e.preventDefault();
-    setIsDragOver(false);
-    if (e.dataTransfer.files && e.dataTransfer.files[0]) {
-      validateAndSetFile(e.dataTransfer.files[0]);
-    }
-  };
+    checkProfileCv();
+  }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!file) {
+
+    if (cvChoice === 'upload' && !file) {
       setErrorMsg('Please select a CV document to upload.');
+      return;
+    }
+    if (cvChoice === 'saved' && !profileCv) {
+      setErrorMsg('No saved profile CV found. Please upload a CV.');
       return;
     }
     if (!jobTitle.trim()) {
@@ -98,17 +102,26 @@ export default function NewApplicationPage() {
     setErrorMsg(null);
 
     try {
-      // Step 1: Upload CV
-      setCurrentStep('uploading');
-      const formData = new FormData();
-      formData.append('file', file);
+      let cvDocumentId = '';
 
-      const uploadRes = await fetchWithAuth('/api/cv/upload', {
-        method: 'POST',
-        body: formData,
-      });
+      if (cvChoice === 'saved' && profileCv) {
+        // Fast-path: Reuse existing parsed profile CV directly
+        cvDocumentId = profileCv.id;
+      } else if (file) {
+        // Step 1: Upload & parse fresh CV
+        setCurrentStep('uploading');
+        const formData = new FormData();
+        formData.append('file', file);
+        formData.append('save_to_profile', saveToProfile ? 'true' : 'false');
 
-      const cvDocumentId = uploadRes.cv_document_id;
+        const uploadRes = await fetchWithAuth('/api/cv/upload', {
+          method: 'POST',
+          body: formData,
+        });
+
+        cvDocumentId = uploadRes.cv_document_id;
+      }
+
       if (!cvDocumentId) {
         throw new Error('Could not retrieve CV document ID.');
       }
@@ -147,6 +160,11 @@ export default function NewApplicationPage() {
     }
   };
 
+  const isFormValid =
+    (cvChoice === 'saved' ? Boolean(profileCv) : Boolean(file)) &&
+    Boolean(jobTitle.trim()) &&
+    Boolean(jobDescription.trim());
+
   return (
     <div className="max-w-3xl mx-auto py-4 space-y-8">
       {/* Terms & Conditions Modal */}
@@ -163,7 +181,7 @@ export default function NewApplicationPage() {
         </div>
         <h1 className="text-3xl font-bold text-slate-900 tracking-tight">Tailor Your CV</h1>
         <p className="text-sm text-slate-500 max-w-lg mx-auto">
-          Upload your existing CV, specify the target company and position, and paste the vacancy requirements.
+          Choose your base CV, specify the target company and position, and paste the vacancy requirements.
         </p>
       </div>
 
@@ -192,15 +210,19 @@ export default function NewApplicationPage() {
             <p className="text-sm text-slate-500 max-w-md mx-auto">
               {currentStep === 'analyzing'
                 ? 'Discovering ATS keyword gaps and drafting precision bullet improvements...'
+                : cvChoice === 'saved'
+                ? 'Using your saved profile CV and preparing analysis...'
                 : 'Extracting clean structural sections and preparing analysis...'}
             </p>
           </div>
 
           <div className="max-w-xs mx-auto space-y-2 text-xs text-slate-400">
-            <div className="flex items-center gap-2">
-              <CheckCircle2 className={`w-4 h-4 ${currentStep !== 'idle' ? 'text-indigo-600' : 'text-slate-300'}`} />
-              <span className={currentStep !== 'idle' ? 'text-slate-700 font-medium' : ''}>Document Upload & Parsing</span>
-            </div>
+            {cvChoice === 'upload' && (
+              <div className="flex items-center gap-2">
+                <CheckCircle2 className={`w-4 h-4 ${currentStep !== 'idle' ? 'text-indigo-600' : 'text-slate-300'}`} />
+                <span className={currentStep !== 'idle' ? 'text-slate-700 font-medium' : ''}>Document Upload & Parsing</span>
+              </div>
+            )}
             <div className="flex items-center gap-2">
               <CheckCircle2 className={`w-4 h-4 ${currentStep === 'creating' || currentStep === 'analyzing' ? 'text-indigo-600' : 'text-slate-300'}`} />
               <span className={currentStep === 'creating' || currentStep === 'analyzing' ? 'text-slate-700 font-medium' : ''}>Target Vacancy Mapping</span>
@@ -213,64 +235,164 @@ export default function NewApplicationPage() {
         </div>
       ) : (
         <form onSubmit={handleSubmit} className="space-y-6">
-          {/* Section 1: CV Upload */}
+          {/* Section 1: Choose or Upload CV */}
           <div className="glass-card p-6 sm:p-7 rounded-2xl space-y-4">
             <div className="flex items-center justify-between">
               <label className="text-sm font-bold text-slate-900 flex items-center gap-2">
                 <FileText className="w-4 h-4 text-indigo-600" />
-                <span>1. Upload Original CV</span>
+                <span>1. Select Base CV</span>
               </label>
-              <span className="text-xs text-slate-400">PDF or DOCX (Max 10MB)</span>
+              {profileCv && (
+                <span className="text-xs text-indigo-600 font-semibold flex items-center gap-1">
+                  <BookmarkCheck className="w-3.5 h-3.5" />
+                  <span>Profile CV Available</span>
+                </span>
+              )}
             </div>
 
-            <input
-              type="file"
-              ref={fileInputRef}
-              onChange={handleFileChange}
-              accept=".pdf,.docx,.txt,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-              className="hidden"
-            />
+            {loadingCv ? (
+              <div className="p-8 text-center text-slate-400 space-y-2 border border-slate-100 rounded-2xl bg-slate-50/50">
+                <Loader2 className="w-6 h-6 animate-spin text-indigo-600 mx-auto" />
+                <p className="text-xs">Checking for saved profile CV...</p>
+              </div>
+            ) : profileCv ? (
+              /* Profile CV exists -> Show Choice Screen */
+              <div className="space-y-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  {/* Option A: Use Saved CV */}
+                  <div
+                    onClick={() => setCvChoice('saved')}
+                    className={`p-4 rounded-2xl border-2 transition-all cursor-pointer flex flex-col justify-between space-y-3 ${
+                      cvChoice === 'saved'
+                        ? 'border-indigo-600 bg-indigo-50/50 shadow-xs'
+                        : 'border-slate-200 hover:border-slate-300 bg-white'
+                    }`}
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="flex items-center gap-2.5">
+                        <div className={`w-8 h-8 rounded-xl flex items-center justify-center shrink-0 ${
+                          cvChoice === 'saved' ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-600'
+                        }`}>
+                          <BookmarkCheck className="w-4 h-4" />
+                        </div>
+                        <div>
+                          <p className="text-xs font-bold text-slate-900">Use Saved Profile CV</p>
+                          <p className="text-[11px] text-slate-500 truncate max-w-[170px]" title={profileCv.filename}>
+                            {profileCv.filename}
+                          </p>
+                        </div>
+                      </div>
+                      <input
+                        type="radio"
+                        name="cvChoice"
+                        checked={cvChoice === 'saved'}
+                        onChange={() => setCvChoice('saved')}
+                        className="mt-1 text-indigo-600 focus:ring-indigo-500"
+                      />
+                    </div>
 
-            {!file ? (
-              <div
-                onClick={() => fileInputRef.current?.click()}
-                onDragOver={(e) => { e.preventDefault(); setIsDragOver(true); }}
-                onDragLeave={() => setIsDragOver(false)}
-                onDrop={handleDrop}
-                className={`border-2 border-dashed rounded-2xl p-8 text-center cursor-pointer transition-all ${
-                  isDragOver
-                    ? 'border-indigo-600 bg-indigo-50/50'
-                    : 'border-slate-200 hover:border-indigo-400 hover:bg-slate-50/50'
-                }`}
-              >
-                <div className="w-12 h-12 rounded-2xl bg-indigo-50 text-indigo-600 flex items-center justify-center mx-auto mb-3">
-                  <Upload className="w-6 h-6" />
+                    <div className="flex items-center justify-between text-[10px] text-slate-400 pt-1 border-t border-slate-100">
+                      <span className="flex items-center gap-1">
+                        <Calendar className="w-3 h-3" />
+                        {new Date(profileCv.created_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}
+                      </span>
+                      <span className="font-semibold text-emerald-600 bg-emerald-50 px-1.5 py-0.2 rounded border border-emerald-200">
+                        Instant Ready
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Option B: Upload Different CV */}
+                  <div
+                    onClick={() => setCvChoice('upload')}
+                    className={`p-4 rounded-2xl border-2 transition-all cursor-pointer flex flex-col justify-between space-y-3 ${
+                      cvChoice === 'upload'
+                        ? 'border-indigo-600 bg-indigo-50/50 shadow-xs'
+                        : 'border-slate-200 hover:border-slate-300 bg-white'
+                    }`}
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="flex items-center gap-2.5">
+                        <div className={`w-8 h-8 rounded-xl flex items-center justify-center shrink-0 ${
+                          cvChoice === 'upload' ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-600'
+                        }`}>
+                          <Upload className="w-4 h-4" />
+                        </div>
+                        <div>
+                          <p className="text-xs font-bold text-slate-900">Upload Different CV</p>
+                          <p className="text-[11px] text-slate-500">PDF or DOCX document</p>
+                        </div>
+                      </div>
+                      <input
+                        type="radio"
+                        name="cvChoice"
+                        checked={cvChoice === 'upload'}
+                        onChange={() => setCvChoice('upload')}
+                        className="mt-1 text-indigo-600 focus:ring-indigo-500"
+                      />
+                    </div>
+
+                    <div className="flex items-center justify-between text-[10px] text-slate-400 pt-1 border-t border-slate-100">
+                      <span>Max 10MB</span>
+                      <span className="font-medium text-slate-500">Custom upload</span>
+                    </div>
+                  </div>
                 </div>
-                <p className="text-sm font-semibold text-slate-700">
-                  Click to browse or drag and drop your CV file here
-                </p>
-                <p className="text-xs text-slate-400 mt-1">
-                  Supports Adobe PDF (.pdf) and Microsoft Word (.docx)
-                </p>
+
+                {/* If Option B is selected, render upload input and replace checkbox */}
+                {cvChoice === 'upload' && (
+                  <div className="pt-2 space-y-3">
+                    <CvUploadInput
+                      file={file}
+                      onFileSelect={setFile}
+                      onError={setErrorMsg}
+                    />
+
+                    {/* Opt-in to overwrite profile CV */}
+                    <label className="flex items-start gap-2.5 p-3 rounded-xl bg-slate-50 border border-slate-200/80 cursor-pointer select-none hover:bg-slate-100/60 transition-colors">
+                      <input
+                        type="checkbox"
+                        checked={saveToProfile}
+                        onChange={(e) => setSaveToProfile(e.target.checked)}
+                        className="mt-0.5 rounded text-indigo-600 focus:ring-indigo-500 border-slate-300"
+                      />
+                      <div className="text-xs">
+                        <span className="font-semibold text-slate-800">
+                          Save this as my profile CV
+                        </span>
+                        <p className="text-slate-500 text-[11px] mt-0.5">
+                          Replaces your current saved profile CV for future applications.
+                        </p>
+                      </div>
+                    </label>
+                  </div>
+                )}
               </div>
             ) : (
-              <div className="p-4 rounded-xl bg-slate-50 border border-slate-200 flex items-center justify-between">
-                <div className="flex items-center gap-3 min-w-0">
-                  <div className="w-10 h-10 rounded-lg bg-indigo-100 text-indigo-600 flex items-center justify-center shrink-0">
-                    <FileText className="w-5 h-5" />
+              /* No Profile CV -> Direct Upload with save checkbox */
+              <div className="space-y-3">
+                <CvUploadInput
+                  file={file}
+                  onFileSelect={setFile}
+                  onError={setErrorMsg}
+                />
+
+                <label className="flex items-start gap-2.5 p-3 rounded-xl bg-indigo-50/50 border border-indigo-100 cursor-pointer select-none hover:bg-indigo-50 transition-colors">
+                  <input
+                    type="checkbox"
+                    checked={saveToProfile}
+                    onChange={(e) => setSaveToProfile(e.target.checked)}
+                    className="mt-0.5 rounded text-indigo-600 focus:ring-indigo-500 border-indigo-300"
+                  />
+                  <div className="text-xs">
+                    <span className="font-semibold text-indigo-950">
+                      Save this as my profile CV
+                    </span>
+                    <p className="text-indigo-700/80 text-[11px] mt-0.5">
+                      Save this so you don't have to upload it next time you tailor an application.
+                    </p>
                   </div>
-                  <div className="min-w-0">
-                    <p className="text-sm font-semibold text-slate-900 truncate">{file.name}</p>
-                    <p className="text-xs text-slate-500">{(file.size / 1024 / 1024).toFixed(2)} MB</p>
-                  </div>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setFile(null)}
-                  className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors"
-                >
-                  <X className="w-5 h-5" />
-                </button>
+                </label>
               </div>
             )}
           </div>
@@ -336,7 +458,7 @@ export default function NewApplicationPage() {
           {/* Submit CTA */}
           <button
             type="submit"
-            disabled={!file || !jobTitle.trim() || !jobDescription.trim()}
+            disabled={!isFormValid}
             className="w-full py-3.5 px-6 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-base shadow-lg shadow-indigo-500/25 transition-all flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed group"
           >
             <Sparkles className="w-5 h-5 group-hover:rotate-12 transition-transform" />

@@ -88,3 +88,40 @@ async def accept_terms(current_user: dict = Depends(get_current_user)):
         return {"status": "success", "terms_agreed": True, "terms_agreed_at": now_iso}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to record terms agreement: {str(e)}")
+
+@app.get("/api/user/cv")
+async def get_user_profile_cv(current_user: dict = Depends(get_current_user)):
+    admin = get_supabase_admin()
+    user_id = current_user["id"]
+    try:
+        p_res = admin.table("profiles").select("default_cv_document_id").eq("id", user_id).execute()
+        if not p_res.data or not p_res.data[0].get("default_cv_document_id"):
+            return {"has_profile_cv": False}
+        
+        default_cv_id = p_res.data[0]["default_cv_document_id"]
+        cv_res = admin.table("cv_documents").select("id, filename, created_at, storage_path").eq("id", default_cv_id).execute()
+        if not cv_res.data:
+            return {"has_profile_cv": False}
+        
+        cv_doc = cv_res.data[0]
+        return {
+            "has_profile_cv": True,
+            "cv": {
+                "id": cv_doc["id"],
+                "filename": cv_doc["filename"],
+                "created_at": cv_doc["created_at"],
+                "storage_path": cv_doc.get("storage_path")
+            }
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to fetch profile CV: {str(e)}")
+
+@app.delete("/api/user/cv")
+async def remove_user_profile_cv(current_user: dict = Depends(get_current_user)):
+    admin = get_supabase_admin()
+    user_id = current_user["id"]
+    try:
+        admin.table("profiles").update({"default_cv_document_id": None}).eq("id", user_id).execute()
+        return {"status": "success", "message": "CV unlinked from profile successfully."}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to remove profile CV: {str(e)}")

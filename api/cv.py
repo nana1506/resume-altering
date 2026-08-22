@@ -1,5 +1,5 @@
 import uuid
-from fastapi import FastAPI, UploadFile, File, HTTPException, Depends
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Depends
 from api._shared.auth import setup_cors, get_current_user
 from api.services.supabase_client import get_supabase_admin, upload_file_to_storage
 from api.services.parser import parse_file_to_structured_cv
@@ -10,6 +10,7 @@ setup_cors(app)
 @app.post("/api/cv/upload")
 async def upload_cv(
     file: UploadFile = File(...),
+    save_to_profile: bool = Form(False),
     current_user: dict = Depends(get_current_user)
 ):
     user_id = current_user["id"]
@@ -44,12 +45,20 @@ async def upload_cv(
         res = admin.table("cv_documents").insert(insert_payload).execute()
         
         doc_record = res.data[0] if res.data else {"id": file_id}
+
+        if save_to_profile:
+            try:
+                admin.table("profiles").update({"default_cv_document_id": doc_record["id"]}).eq("id", user_id).execute()
+            except Exception as err:
+                print(f"Warning: Failed to set default_cv_document_id on profile: {err}")
+
         return {
             "cv_document_id": doc_record["id"],
             "filename": filename,
             "storage_path": storage_path,
             "parsed_text": parsed_text,
-            "parsed_structure": parsed_cv.model_dump()
+            "parsed_structure": parsed_cv.model_dump(),
+            "saved_to_profile": bool(save_to_profile)
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Database insertion failed: {str(e)}")

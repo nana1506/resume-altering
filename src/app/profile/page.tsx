@@ -4,8 +4,8 @@ export const dynamic = 'force-dynamic';
 
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { createClient } from '@/lib/supabase/client';
 import { fetchWithAuth } from '@/lib/api';
+import { useAuth } from '@/context/AuthContext';
 import TermsModal from '@/components/TermsModal';
 import { 
   User, 
@@ -26,24 +26,8 @@ import {
   ShieldCheck
 } from 'lucide-react';
 
-interface ProfileData {
-  id: string;
-  email: string;
-  name?: string;
-  headline?: string;
-  phone?: string;
-  location?: string;
-  linkedin_url?: string;
-  github_url?: string;
-  portfolio_url?: string;
-  bio?: string;
-  role: string;
-  status: string;
-  terms_agreed: boolean;
-}
-
 export default function ProfilePage() {
-  const [profile, setProfile] = useState<ProfileData | null>(null);
+  const { user, profile, loading: authLoading, refreshProfile } = useAuth();
   const [name, setName] = useState('');
   const [headline, setHeadline] = useState('');
   const [phone, setPhone] = useState('');
@@ -53,47 +37,36 @@ export default function ProfilePage() {
   const [portfolioUrl, setPortfolioUrl] = useState('');
   const [bio, setBio] = useState('');
 
-  const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
   const [showTermsModal, setShowTermsModal] = useState(false);
 
-  const supabase = createClient();
   const router = useRouter();
 
   useEffect(() => {
-    async function loadProfile() {
-      try {
-        const { data: { user } } = await supabase.auth.getUser();
-        if (!user) {
-          router.push('/login');
-          return;
-        }
+    if (authLoading) return;
 
-        const data: ProfileData = await fetchWithAuth('/api/user/profile');
-        setProfile(data);
-        setName(data.name || '');
-        setHeadline(data.headline || '');
-        setPhone(data.phone || '');
-        setLocation(data.location || '');
-        setLinkedinUrl(data.linkedin_url || '');
-        setGithubUrl(data.github_url || '');
-        setPortfolioUrl(data.portfolio_url || '');
-        setBio(data.bio || '');
+    if (!user) {
+      router.push('/login');
+      return;
+    }
 
-        if (!data.terms_agreed) {
-          setShowTermsModal(true);
-        }
-      } catch (err: any) {
-        console.error('Failed to load profile:', err);
-        setErrorMsg(err.message || 'Failed to load personal profile');
-      } finally {
-        setLoading(false);
+    if (profile) {
+      setName(profile.name || '');
+      setHeadline(profile.headline || '');
+      setPhone(profile.phone || '');
+      setLocation(profile.location || '');
+      setLinkedinUrl(profile.linkedin_url || '');
+      setGithubUrl(profile.github_url || '');
+      setPortfolioUrl(profile.portfolio_url || '');
+      setBio(profile.bio || '');
+
+      if (!profile.terms_agreed) {
+        setShowTermsModal(true);
       }
     }
-    loadProfile();
-  }, [supabase, router]);
+  }, [authLoading, user, profile, router]);
 
   const handleSaveProfile = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -117,6 +90,7 @@ export default function ProfilePage() {
         }),
       });
 
+      await refreshProfile();
       setSuccessMsg(res.message || 'Personal profile updated successfully!');
       setTimeout(() => setSuccessMsg(null), 4000);
     } catch (err: any) {
@@ -127,7 +101,7 @@ export default function ProfilePage() {
     }
   };
 
-  if (loading) {
+  if (authLoading) {
     return (
       <div className="min-h-[50vh] flex flex-col items-center justify-center space-y-3">
         <Loader2 className="w-8 h-8 animate-spin text-indigo-600" />

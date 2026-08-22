@@ -13,6 +13,34 @@ export async function updateSession(request: NextRequest) {
     return supabaseResponse;
   }
 
+  const pathname = request.nextUrl.pathname;
+  const isProtectedPath =
+    pathname.startsWith('/dashboard') ||
+    pathname.startsWith('/new') ||
+    pathname.startsWith('/applications') ||
+    pathname.startsWith('/profile') ||
+    pathname.startsWith('/admin');
+  const isAuthPath = pathname === '/login' || pathname === '/register';
+
+  // Check if any supabase auth cookie is present
+  const allCookies = request.cookies.getAll();
+  const hasAuthCookie = allCookies.some((c) =>
+    c.name.includes('sb-') || c.name.includes('supabase') || c.name.includes('auth-token')
+  );
+
+  // Fast path: Unauthenticated user visiting public page (no remote network round-trip)
+  if (!hasAuthCookie && !isProtectedPath && !isAuthPath) {
+    return supabaseResponse;
+  }
+
+  // Fast path: Unauthenticated user visiting protected route -> redirect immediately
+  if (!hasAuthCookie && isProtectedPath) {
+    const url = request.nextUrl.clone();
+    url.pathname = '/login';
+    return NextResponse.redirect(url);
+  }
+
+  // Only refresh token / check user over the network if auth cookie exists or is on protected/auth path
   const supabase = createServerClient(
     supabaseUrl,
     supabaseAnonKey,
@@ -38,10 +66,6 @@ export async function updateSession(request: NextRequest) {
 
   // Refresh auth token
   const { data: { user } } = await supabase.auth.getUser();
-
-  const pathname = request.nextUrl.pathname;
-  const isProtectedPath = pathname.startsWith('/dashboard') || pathname.startsWith('/new') || pathname.startsWith('/applications');
-  const isAuthPath = pathname === '/login' || pathname === '/register';
 
   if (!user && isProtectedPath) {
     const url = request.nextUrl.clone();

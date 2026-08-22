@@ -9,12 +9,19 @@ SUPABASE_URL = os.getenv("NEXT_PUBLIC_SUPABASE_URL", "")
 SUPABASE_ANON_KEY = os.getenv("NEXT_PUBLIC_SUPABASE_ANON_KEY", "")
 SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
 
+_cached_admin_client: Optional[Client] = None
+
 def get_supabase_admin() -> Client:
-    """Returns a Supabase client configured with the service role key for server operations."""
+    """Returns a cached Supabase client configured with the service role key for server operations."""
+    global _cached_admin_client
+    if _cached_admin_client is not None:
+        return _cached_admin_client
+
     key = SUPABASE_SERVICE_ROLE_KEY or SUPABASE_ANON_KEY
     if not SUPABASE_URL or not key:
         raise ValueError("Supabase environment variables NEXT_PUBLIC_SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY (or NEXT_PUBLIC_SUPABASE_ANON_KEY) must be set.")
-    return create_client(SUPABASE_URL, key)
+    _cached_admin_client = create_client(SUPABASE_URL, key)
+    return _cached_admin_client
 
 def get_supabase_client_for_user(access_token: Optional[str] = None) -> Client:
     """Returns a Supabase client with user context if access_token is provided."""

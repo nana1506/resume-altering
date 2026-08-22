@@ -2,10 +2,10 @@
 
 export const dynamic = 'force-dynamic';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
-import { createClient } from '@/lib/supabase/client';
 import { fetchWithAuth } from '@/lib/api';
+import { useAuth } from '@/context/AuthContext';
 import { 
   Users, 
   UserCheck, 
@@ -63,6 +63,7 @@ interface AdminStats {
 }
 
 export default function AdminDashboardPage() {
+  const { user, isAdmin, loading: authLoading } = useAuth();
   const [stats, setStats] = useState<AdminStats | null>(null);
   const [requests, setRequests] = useState<AccessRequest[]>([]);
   const [users, setUsers] = useState<UserProfile[]>([]);
@@ -87,19 +88,11 @@ export default function AdminDashboardPage() {
   const [resendingId, setResendingId] = useState<string | null>(null);
 
   const router = useRouter();
-  const supabase = createClient();
 
-  const loadAdminData = async () => {
+  const loadAdminData = useCallback(async () => {
     try {
       setLoading(true);
       setErrorMsg(null);
-
-      // Verify admin role
-      const profile = await fetchWithAuth('/api/user/profile');
-      if (profile.role !== 'admin' && profile.email !== 'isnan.rizqikurniawan@gmail.com') {
-        router.push('/dashboard');
-        return;
-      }
 
       const [statsData, reqsData, usersData] = await Promise.all([
         fetchWithAuth('/api/admin/stats'),
@@ -116,11 +109,18 @@ export default function AdminDashboardPage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
+    if (authLoading) return;
+
+    if (!user || !isAdmin) {
+      router.push('/dashboard');
+      return;
+    }
+
     loadAdminData();
-  }, []);
+  }, [authLoading, user, isAdmin, router, loadAdminData]);
 
   const handleApproveRequest = async (requestId: string) => {
     try {

@@ -2,11 +2,12 @@
 
 export const dynamic = 'force-dynamic';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 import { fetchWithAuth } from '@/lib/api';
+import { useAuth } from '@/context/AuthContext';
 import TermsModal from '@/components/TermsModal';
 import { 
   PlusCircle, 
@@ -41,6 +42,7 @@ interface ApplicationItem {
 }
 
 export default function DashboardPage() {
+  const { user, profile, loading: authLoading } = useAuth();
   const [applications, setApplications] = useState<ApplicationItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -50,24 +52,8 @@ export default function DashboardPage() {
   const supabase = createClient();
   const router = useRouter();
 
-  const loadDashboardData = async () => {
+  const loadApplications = useCallback(async () => {
     try {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) {
-        router.push('/login');
-        return;
-      }
-
-      // Check profile terms agreement
-      try {
-        const profile = await fetchWithAuth('/api/user/profile');
-        if (!profile.terms_agreed) {
-          setShowTermsModal(true);
-        }
-      } catch (e) {
-        console.error('Error fetching profile terms:', e);
-      }
-
       // Fetch applications with joined cv_documents, suggestions, and generated cvs
       const { data, error } = await supabase
         .from('job_applications')
@@ -102,11 +88,22 @@ export default function DashboardPage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [supabase]);
 
   useEffect(() => {
-    loadDashboardData();
-  }, [supabase, router]);
+    if (authLoading) return;
+
+    if (!user) {
+      router.push('/login');
+      return;
+    }
+
+    if (profile && !profile.terms_agreed) {
+      setShowTermsModal(true);
+    }
+
+    loadApplications();
+  }, [authLoading, user, profile, router, loadApplications]);
 
   const handleDeleteApplication = async (appId: string, jobTitle: string) => {
     if (!confirm(`Are you sure you want to delete the tailored CV application for "${jobTitle}"? This cannot be undone.`)) {

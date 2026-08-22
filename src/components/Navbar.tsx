@@ -1,63 +1,17 @@
 'use client';
 
-import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter, usePathname } from 'next/navigation';
-import { createClient } from '@/lib/supabase/client';
-import { fetchWithAuth } from '@/lib/api';
+import { useAuth } from '@/context/AuthContext';
 import { Sparkles, PlusCircle, LogOut, LayoutDashboard, User, ShieldCheck } from 'lucide-react';
 
 export default function Navbar() {
-  const [user, setUser] = useState<{ id: string; email?: string } | null>(null);
-  const [isAdmin, setIsAdmin] = useState(false);
-  const [loading, setLoading] = useState(true);
+  const { user, isAdmin, loading, signOut } = useAuth();
   const router = useRouter();
   const pathname = usePathname();
-  const supabase = createClient();
-
-  useEffect(() => {
-    async function checkUser() {
-      try {
-        const { data: { session } } = await supabase.auth.getSession();
-        const currentUser = session?.user ?? null;
-        setUser(currentUser);
-
-        if (currentUser) {
-          try {
-            const profile = await fetchWithAuth('/api/user/profile');
-            setIsAdmin(profile.role === 'admin' || profile.email === 'isnan.rizqikurniawan@gmail.com');
-          } catch (e) {
-            setIsAdmin(currentUser.email === 'isnan.rizqikurniawan@gmail.com');
-          }
-        } else {
-          setIsAdmin(false);
-        }
-      } catch (err) {
-        console.error('Error fetching session:', err);
-      } finally {
-        setLoading(false);
-      }
-    }
-
-    checkUser();
-
-    const { data: authListener } = supabase.auth.onAuthStateChange((_event, session) => {
-      const currentUser = session?.user ?? null;
-      setUser(currentUser);
-      if (currentUser) {
-        setIsAdmin(currentUser.email === 'isnan.rizqikurniawan@gmail.com');
-      } else {
-        setIsAdmin(false);
-      }
-    });
-
-    return () => {
-      authListener.subscription.unsubscribe();
-    };
-  }, [supabase]);
 
   const handleSignOut = async () => {
-    await supabase.auth.signOut();
+    await signOut();
     router.push('/login');
     router.refresh();
   };

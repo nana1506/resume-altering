@@ -5,6 +5,7 @@ export const dynamic = 'force-dynamic';
 import { useState, useRef, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { fetchWithAuth } from '@/lib/api';
+import { useAuth } from '@/context/AuthContext';
 import TermsModal from '@/components/TermsModal';
 import { 
   Upload, 
@@ -20,6 +21,7 @@ import {
 } from 'lucide-react';
 
 export default function NewApplicationPage() {
+  const { profile } = useAuth();
   const [file, setFile] = useState<File | null>(null);
   const [jobTitle, setJobTitle] = useState('');
   const [companyName, setCompanyName] = useState('');
@@ -34,18 +36,10 @@ export default function NewApplicationPage() {
   const router = useRouter();
 
   useEffect(() => {
-    async function checkTerms() {
-      try {
-        const profile = await fetchWithAuth('/api/user/profile');
-        if (!profile.terms_agreed) {
-          setShowTermsModal(true);
-        }
-      } catch (e) {
-        console.error(e);
-      }
+    if (profile && !profile.terms_agreed) {
+      setShowTermsModal(true);
     }
-    checkTerms();
-  }, []);
+  }, [profile]);
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {

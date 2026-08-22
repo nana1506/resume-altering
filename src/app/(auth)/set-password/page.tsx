@@ -144,6 +144,18 @@ function SetPasswordForm() {
         throw error;
       }
 
+      // Transition profile status from 'invited' to 'active'
+      try {
+        if (session.user?.id) {
+          await supabase
+            .from('profiles')
+            .update({ status: 'active' })
+            .eq('id', session.user.id);
+        }
+      } catch (profileErr) {
+        console.warn('Could not update profile status to active:', profileErr);
+      }
+
       setSuccessMsg('Your password has been set successfully! Redirecting to your dashboard...');
       setTimeout(() => {
         router.push('/dashboard');

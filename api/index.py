@@ -550,6 +550,7 @@ async def accept_terms(current_user: dict = Depends(get_current_user)):
         admin.table("profiles").upsert({
             "id": current_user["id"],
             "email": current_user["email"],
+            "status": "active",
             "terms_agreed": True,
             "terms_agreed_at": now_iso
         }).execute()

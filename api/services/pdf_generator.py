@@ -1,19 +1,6 @@
 import io
 import re
 from typing import List, Dict, Any
-from reportlab.lib.pagesizes import letter
-from reportlab.lib import colors
-from reportlab.lib.units import inch
-from reportlab.platypus import (
-    SimpleDocTemplate,
-    Paragraph,
-    Spacer,
-    HRFlowable,
-    ListFlowable,
-    ListItem
-)
-from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_JUSTIFY
 
 def apply_changes_to_text(original_text: str, changes: List[Dict[str, Any]]) -> str:
     """
@@ -72,6 +59,20 @@ def build_pdf_from_cv_text(cv_text: str) -> bytes:
     """
     Renders a clean, modern, ATS-friendly PDF from structured CV text using ReportLab.
     """
+    from reportlab.lib.pagesizes import letter
+    from reportlab.lib import colors
+    from reportlab.lib.units import inch
+    from reportlab.platypus import (
+        SimpleDocTemplate,
+        Paragraph,
+        Spacer,
+        HRFlowable,
+        ListFlowable,
+        ListItem
+    )
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_JUSTIFY
+
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(
         buffer,

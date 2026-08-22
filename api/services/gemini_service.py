@@ -174,7 +174,8 @@ You MUST return ONLY valid JSON matching this schema:
     import google.generativeai as genai
     genai.configure(api_key=api_key)
 
-    candidate_models = ["gemini-2.5-flash", "gemini-flash-latest", "gemini-2.5-flash-lite", "gemini-3-flash-preview"]
+    # Primary reliable models (fast & stable)
+    candidate_models = ["gemini-2.5-flash", "gemini-flash-latest"]
     
     last_error = None
     for model_name in candidate_models:
@@ -198,23 +199,24 @@ You MUST return ONLY valid JSON matching this schema:
             last_error = err
             continue
 
-    # Fallback retry without strict mime-type if needed
-    for model_name in candidate_models:
-        try:
-            model = genai.GenerativeModel(model_name=model_name)
-            retry_prompt = prompt + "\n\nCRITICAL RETRY: Return ONLY valid JSON format. Start with { and end with }."
-            response = model.generate_content(retry_prompt)
-            raw_text = response.text
-            cleaned_json = clean_json_string(raw_text)
-            data = json.loads(cleaned_json)
-            parsed = GeminiAnalysisResponse(**data)
+    # Single retry pass with strict formatting prompt reminder on the primary model
+    try:
+        model = genai.GenerativeModel(
+            model_name="gemini-2.5-flash",
+            generation_config={"response_mime_type": "application/json"}
+        )
+        retry_prompt = prompt + "\n\nCRITICAL RETRY: Return ONLY valid JSON format matching schema. Start with { and end with }."
+        response = model.generate_content(retry_prompt)
+        raw_text = response.text
+        cleaned_json = clean_json_string(raw_text)
+        data = json.loads(cleaned_json)
+        parsed = GeminiAnalysisResponse(**data)
+        
+        if not parsed.keywords or len(parsed.keywords) < 3:
+            parsed.keywords = fallback_keyword_extractor(cv_text, job_title, job_description)
             
-            if not parsed.keywords or len(parsed.keywords) < 3:
-                parsed.keywords = fallback_keyword_extractor(cv_text, job_title, job_description)
-                
-            return parsed
-        except Exception as retry_err:
-            last_error = retry_err
-            continue
+        return parsed
+    except Exception as retry_err:
+        last_error = retry_err
 
     raise RuntimeError(f"Failed to generate and parse Gemini CV suggestions: {str(last_error)}")

@@ -21,16 +21,8 @@ from api.services.pdf_generator import generate_tailored_pdf
 
 app = FastAPI(title="CV Tailor API", version="2.3.0")
 
-# Enable CORS for Next.js frontend
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-ADMIN_EMAIL = "isnan.rizqikurniawan@gmail.com"
+from api._shared.auth import setup_cors, ADMIN_EMAIL
+setup_cors(app)
 
 def get_current_user(authorization: Optional[str] = Header(None)) -> dict:
     if not authorization or not authorization.startswith("Bearer "):

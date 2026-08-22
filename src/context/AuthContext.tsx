@@ -40,7 +40,7 @@ const AuthContext = createContext<AuthContextType>({
   signOut: async () => {},
 });
 
-const ADMIN_EMAIL = 'isnan.rizqikurniawan@gmail.com';
+const ADMIN_EMAIL = process.env.NEXT_PUBLIC_ADMIN_EMAIL || '';
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);

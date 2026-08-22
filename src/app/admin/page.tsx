@@ -509,7 +509,7 @@ export default function AdminDashboardPage() {
                 </thead>
                 <tbody className="divide-y divide-slate-100">
                   {filteredUsers.map((user) => {
-                    const isRootAdmin = user.email === 'isnan.rizqikurniawan@gmail.com';
+                    const isRootAdmin = user.is_admin || (Boolean(process.env.NEXT_PUBLIC_ADMIN_EMAIL) && user.email === process.env.NEXT_PUBLIC_ADMIN_EMAIL);
 
                     return (
                       <tr key={user.id} className="hover:bg-slate-50/80 transition-colors">

@@ -22,6 +22,7 @@ interface GeneratedCV {
   id: string;
   storage_path: string;
   download_url: string;
+  filename?: string;
   created_at: string;
 }
 
@@ -100,7 +101,7 @@ export default function ResultPage() {
             href={latestCV.download_url}
             target="_blank"
             rel="noopener noreferrer"
-            download
+            download={latestCV.filename || 'CV.pdf'}
             className="inline-flex items-center justify-center gap-2 px-6 py-3 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-sm shadow-lg shadow-indigo-500/25 transition-all"
           >
             <Download className="w-4 h-4" />
@@ -157,7 +158,7 @@ export default function ResultPage() {
                   href={latestCV.download_url}
                   target="_blank"
                   rel="noopener noreferrer"
-                  download
+                  download={latestCV.filename || 'CV.pdf'}
                   className="w-full py-3 px-4 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-medium text-sm shadow-sm transition-all flex items-center justify-center gap-2"
                 >
                   <Download className="w-4 h-4" />

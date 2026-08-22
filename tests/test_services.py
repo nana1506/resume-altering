@@ -317,7 +317,19 @@ def test_rich_text_formatting():
     assert "<i>FastAPI</i>" in formatted
     assert "<b>Docker</b>" in formatted
     assert "**" not in formatted
-    print("Rich text formatting verified successfully!")
+from api.applications import build_export_filename
+
+def test_export_filename_format():
+    print("Testing Export Filename Format...")
+    fn1 = build_export_filename(user_name="John Doe", job_title="Data Analyst", company_name="Google")
+    assert fn1 == "CV_JOHN_DOE_Data_Analyst_Google.pdf", f"Unexpected filename: {fn1}"
+
+    fn2 = build_export_filename(user_name="Isnan Rizqi Kurniawan", job_title="Senior Product Manager", company_name="Telkom Indonesia")
+    assert fn2 == "CV_ISNAN_RIZQI_KURNIAWAN_Senior_Product_Manager_Telkom_Indonesia.pdf", f"Unexpected filename: {fn2}"
+
+    fn3 = build_export_filename(user_name="Alex", job_title="Software Engineer", company_name="")
+    assert fn3 == "CV_ALEX_Software_Engineer.pdf", f"Unexpected filename: {fn3}"
+    print("Export filename format verified successfully!")
 
 if __name__ == "__main__":
     test_line_wrap_continuation_merging()
@@ -325,6 +337,7 @@ if __name__ == "__main__":
     test_apply_changes_to_cv()
     test_template_reordering()
     test_rich_text_formatting()
+    test_export_filename_format()
     test_pdf_generation()
     test_gemini_json_parsing()
     test_fallback_keyword_extractor()

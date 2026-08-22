@@ -208,6 +208,32 @@ async def update_change(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to update change: {str(e)}")
 
+import re
+
+def sanitize_filename_part(text: str) -> str:
+    """Removes unsafe characters and replaces whitespace/special chars with underscores."""
+    if not text:
+        return ""
+    clean = re.sub(r'[\s\-]+', '_', text.strip())
+    clean = re.sub(r'[^A-Za-z0-9_]', '', clean)
+    clean = re.sub(r'_+', '_', clean).strip('_')
+    return clean
+
+def build_export_filename(user_name: str, job_title: str, company_name: str = "") -> str:
+    """
+    Builds the format: CV_user name(CAPS)_role(from user input)_company(from user input).pdf
+    e.g. CV_JOHN_DOE_Data_Analyst_Google.pdf
+    """
+    clean_name = sanitize_filename_part(user_name).upper() or "CANDIDATE"
+    clean_role = sanitize_filename_part(job_title) or "Tailored"
+    clean_company = sanitize_filename_part(company_name or "")
+    
+    parts = ["CV", clean_name, clean_role]
+    if clean_company:
+        parts.append(clean_company)
+        
+    return f"{'_'.join(parts)}.pdf"
+
 # 5. POST /api/applications/{application_id}/generate
 @app.post("/api/applications/{application_id}/generate")
 async def generate_cv(
@@ -247,10 +273,35 @@ async def generate_cv(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"PDF rendering failed: {str(e)}")
         
+    # Extract candidate name for filename
+    user_name = ""
+    try:
+        prof_res = admin.table("profiles").select("name").eq("id", user_id).execute()
+        if prof_res.data and prof_res.data[0].get("name"):
+            user_name = prof_res.data[0].get("name")
+    except Exception:
+        pass
+        
+    if not user_name:
+        if isinstance(source_data, dict):
+            user_name = source_data.get("name", "")
+        elif isinstance(source_data, ParsedCV):
+            user_name = source_data.name
+            
+    if not user_name:
+        user_name = current_user.get("email", "").split("@")[0]
+
     gen_id = str(uuid.uuid4())
-    clean_title = "".join(c for c in app_data.get("job_title", "tailored") if c.isalnum() or c in (' ', '_', '-')).strip().replace(' ', '_')
-    gen_filename = f"CV_Tailored_{clean_title}_{gen_id[:8]}.pdf"
-    storage_path = f"{user_id}/{gen_id}_{gen_filename}"
+    job_title_input = app_data.get("job_title", "")
+    company_name_input = app_data.get("company_name", "") or ""
+    
+    gen_filename = build_export_filename(
+        user_name=user_name,
+        job_title=job_title_input,
+        company_name=company_name_input
+    )
+    
+    storage_path = f"{user_id}/{gen_id}/{gen_filename}"
     
     try:
         upload_file_to_storage("generated", storage_path, pdf_bytes, "application/pdf")
@@ -267,7 +318,7 @@ async def generate_cv(
         raise HTTPException(status_code=500, detail=f"Database insertion failed: {str(e)}")
         
     try:
-        download_url = create_signed_download_url("generated", storage_path, expires_in=3600)
+        download_url = create_signed_download_url("generated", storage_path, expires_in=3600, download_filename=gen_filename)
     except Exception:
         download_url = ""
         
@@ -332,7 +383,14 @@ async def get_application_details(
     generated_cvs = gen_res.data or []
     for gen in generated_cvs:
         try:
-            gen["download_url"] = create_signed_download_url("generated", gen["storage_path"], expires_in=3600)
+            path_file = gen.get("storage_path", "").split("/")[-1]
+            gen["filename"] = path_file
+            gen["download_url"] = create_signed_download_url(
+                "generated",
+                gen["storage_path"],
+                expires_in=3600,
+                download_filename=path_file
+            )
         except Exception:
             gen["download_url"] = None
 

@@ -56,10 +56,21 @@ def upload_file_to_storage(bucket_name: str, path: str, file_bytes: bytes, conte
             raise e
     return path
 
-def create_signed_download_url(bucket_name: str, path: str, expires_in: int = 3600) -> str:
-    """Creates a signed URL for private bucket file download."""
+def create_signed_download_url(bucket_name: str, path: str, expires_in: int = 3600, download_filename: Optional[str] = None) -> str:
+    """Creates a signed URL for private bucket file download with custom Content-Disposition filename."""
     client = get_supabase_admin()
-    response = client.storage.from_(bucket_name).create_signed_url(path, expires_in)
+    options = {}
+    if download_filename:
+        options["download"] = download_filename
+        
+    try:
+        if options:
+            response = client.storage.from_(bucket_name).create_signed_url(path, expires_in, options=options)
+        else:
+            response = client.storage.from_(bucket_name).create_signed_url(path, expires_in)
+    except TypeError:
+        response = client.storage.from_(bucket_name).create_signed_url(path, expires_in)
+        
     if isinstance(response, dict) and "signedURL" in response:
         return response["signedURL"]
     elif hasattr(response, "signed_url"):

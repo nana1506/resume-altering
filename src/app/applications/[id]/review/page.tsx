@@ -507,7 +507,7 @@ export default function ReviewChecklistPage() {
               return (
                 <div
                   key={change.id}
-                  className={`glass-card rounded-2xl p-5 transition-all border ${
+                  className={`glass-card rounded-2xl p-5 transition-all border relative hover:z-20 ${
                     change.checked
                       ? 'border-indigo-200 bg-white shadow-sm ring-1 ring-indigo-500/10'
                       : 'border-slate-200 bg-slate-50/60 opacity-70'
@@ -536,9 +536,33 @@ export default function ReviewChecklistPage() {
                         </span>
 
                         {change.reason && (
-                          <div className="inline-flex items-center gap-1 text-xs text-indigo-700 bg-indigo-50/80 px-2.5 py-0.5 rounded-lg border border-indigo-100/80">
-                            <Sparkles className="w-3 h-3 shrink-0" />
-                            <span className="truncate max-w-xs">{change.reason}</span>
+                          <div className="relative group/reason">
+                            <div
+                              className="inline-flex items-center gap-1.5 text-xs font-medium text-indigo-700 bg-indigo-50/90 hover:bg-indigo-100/90 px-2.5 py-1 rounded-lg border border-indigo-100 hover:border-indigo-200 transition-colors cursor-help shadow-xs"
+                              title={change.reason}
+                            >
+                              <Sparkles className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
+                              <span className="truncate max-w-[200px] sm:max-w-xs md:max-w-sm">{change.reason}</span>
+                            </div>
+
+                            {/* Floating tooltip on hover to reveal full sentence */}
+                            <div className="absolute right-0 bottom-full mb-2 hidden group-hover/reason:block z-30 w-72 sm:w-80 md:w-96 max-w-[calc(100vw-3rem)] p-3 bg-slate-900/95 backdrop-blur-md text-white text-xs rounded-xl shadow-xl border border-slate-700/80 pointer-events-none transition-all duration-200 animate-in fade-in zoom-in-95">
+                              <div className="flex items-start gap-2.5">
+                                <div className="p-1 rounded-md bg-indigo-500/20 text-indigo-300 shrink-0 mt-0.5">
+                                  <Sparkles className="w-3.5 h-3.5" />
+                                </div>
+                                <div className="space-y-1">
+                                  <p className="font-semibold text-slate-300 text-[10px] tracking-wider uppercase">
+                                    Enhancement Reason
+                                  </p>
+                                  <p className="text-slate-100 font-normal leading-relaxed text-xs break-words whitespace-normal">
+                                    {change.reason}
+                                  </p>
+                                </div>
+                              </div>
+                              {/* Tooltip caret arrow */}
+                              <div className="absolute right-6 -bottom-1 w-2.5 h-2.5 bg-slate-900 border-r border-b border-slate-700 rotate-45" />
+                            </div>
                           </div>
                         )}
                       </div>

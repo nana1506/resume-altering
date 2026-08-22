@@ -307,11 +307,24 @@ def test_fallback_keyword_extractor():
     assert "PostgreSQL" in terms
     print(f"Extracted {len(extracted)} keywords reliably: {terms}")
 
+from api.services.pdf_generator import format_rich_text
+
+def test_rich_text_formatting():
+    print("Testing Rich Text Formatting (**bold**, *italic*)...")
+    sample_text = "Experienced in **Python** and *FastAPI* with **Docker** microservices."
+    formatted = format_rich_text(sample_text)
+    assert "<b>Python</b>" in formatted
+    assert "<i>FastAPI</i>" in formatted
+    assert "<b>Docker</b>" in formatted
+    assert "**" not in formatted
+    print("Rich text formatting verified successfully!")
+
 if __name__ == "__main__":
     test_line_wrap_continuation_merging()
     test_cv_structuring()
     test_apply_changes_to_cv()
     test_template_reordering()
+    test_rich_text_formatting()
     test_pdf_generation()
     test_gemini_json_parsing()
     test_fallback_keyword_extractor()

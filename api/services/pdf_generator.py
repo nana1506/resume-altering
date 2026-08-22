@@ -125,11 +125,24 @@ def escape_xml(text: str) -> str:
             .replace("'", '&#39;')
     )
 
+def format_rich_text(text: str) -> str:
+    """
+    Escapes XML entities and converts markdown formatting (**bold**, *italic*)
+    into ReportLab-compatible markup tags (<b>bold</b>, <i>italic</i>).
+    """
+    escaped = escape_xml(text)
+    # Convert **bold** or __bold__ to <b>bold</b>
+    escaped = re.sub(r'\*\*(.+?)\*\*', r'<b>\1</b>', escaped)
+    escaped = re.sub(r'__(.+?)__', r'<b>\1</b>', escaped)
+    # Convert *italic* or _italic_ to <i>italic</i>
+    escaped = re.sub(r'(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)', r'<i>\1</i>', escaped)
+    return escaped
+
 def format_subheading_text(text: str) -> str:
     """
     Formats job title / company / date subheadings nicely with bold title and italicized dates.
     """
-    escaped = escape_xml(text)
+    escaped = format_rich_text(text)
     # Match date patterns at the end of the line (e.g. " | 2021 - Present" or "(2019 - 2023)")
     date_regex = re.compile(r'(\s*[\(\|\-]\s*(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec|[0-9]{4}).*?\)?)$', re.IGNORECASE)
     match = date_regex.search(escaped)
@@ -312,13 +325,13 @@ def build_pdf_from_cv(parsed_cv: ParsedCV, template_mode: str = "input") -> byte
 
             if entry.type == "skill_line":
                 label_part = f"<b>{escape_xml(entry.label)}:</b> " if entry.label else ""
-                story.append(Paragraph(f"{label_part}{escape_xml(clean_text_content)}", skill_line_style))
+                story.append(Paragraph(f"{label_part}{format_rich_text(clean_text_content)}", skill_line_style))
             elif entry.type == "bullet":
-                story.append(Paragraph(f"&bull; {escape_xml(clean_text_content)}", bullet_style))
+                story.append(Paragraph(f"&bull; {format_rich_text(clean_text_content)}", bullet_style))
             elif entry.type == "subheading":
                 story.append(Paragraph(format_subheading_text(clean_text_content), subheading_style))
             else:
-                story.append(Paragraph(escape_xml(clean_text_content), paragraph_style))
+                story.append(Paragraph(format_rich_text(clean_text_content), paragraph_style))
 
     doc.build(story)
     return buffer.getvalue()

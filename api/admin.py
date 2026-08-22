@@ -1,3 +1,4 @@
+from datetime import datetime, timedelta, timezone
 from fastapi import FastAPI, HTTPException, Depends
 from api._shared.auth import setup_cors, get_admin_user, get_app_site_url, ADMIN_EMAIL
 from api._shared.models import AccessRequestPayload, DirectInvitePayload, UpdateUserPayload
@@ -178,6 +179,134 @@ async def list_users_usage(admin_user: dict = Depends(get_admin_user)):
         return {"users": enriched}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to list users: {str(e)}")
+
+def _compute_user_storage_bytes(admin, user_id: str) -> int:
+    """Computes total storage bytes used across cvs and generated buckets for a user."""
+    total_bytes = 0
+    # 1. cvs bucket
+    try:
+        cv_items = admin.storage.from_("cvs").list(path=user_id) or []
+        for item in cv_items:
+            if isinstance(item, dict):
+                meta = item.get("metadata") or {}
+                size = meta.get("size") or item.get("size") or 0
+                total_bytes += int(size)
+    except Exception:
+        pass
+
+    # 2. generated bucket (may contain subfolders for generation IDs)
+    try:
+        gen_items = admin.storage.from_("generated").list(path=user_id) or []
+        for item in gen_items:
+            if isinstance(item, dict):
+                meta = item.get("metadata") or {}
+                subfolder = item.get("name")
+                # If subfolder, list files inside
+                if subfolder and (meta.get("mimetype") == "application/json" or not meta or item.get("id") is None):
+                    try:
+                        subfiles = admin.storage.from_("generated").list(path=f"{user_id}/{subfolder}") or []
+                        for sf in subfiles:
+                            if isinstance(sf, dict):
+                                sf_meta = sf.get("metadata") or {}
+                                sf_size = sf_meta.get("size") or sf.get("size") or 0
+                                total_bytes += int(sf_size)
+                    except Exception:
+                        pass
+                else:
+                    size = meta.get("size") or item.get("size") or 0
+                    total_bytes += int(size)
+    except Exception:
+        pass
+
+    return total_bytes
+
+@app.get("/api/admin/usage")
+async def get_admin_usage(admin_user: dict = Depends(get_admin_user)):
+    admin = get_supabase_admin()
+    
+    try:
+        # Fetch all profiles
+        profiles_res = admin.table("profiles").select("id, email, name, role, created_at").order("created_at", desc=True).execute()
+        profiles = profiles_res.data or []
+
+        # Fetch usage logs
+        logs_res = admin.table("gemini_usage_log").select("user_id, input_tokens, output_tokens, created_at").execute()
+        logs = logs_res.data or []
+
+        now_utc = datetime.now(timezone.utc)
+        thirty_days_ago = (now_utc - timedelta(days=30)).isoformat()
+
+        # Aggregate per user
+        user_usage = {}
+        for p in profiles:
+            uid = p["id"]
+            user_usage[uid] = {
+                "calls_last_30d": 0,
+                "calls_all_time": 0,
+                "total_tokens": 0,
+            }
+
+        for log in logs:
+            uid = log.get("user_id")
+            if not uid:
+                continue
+            if uid not in user_usage:
+                user_usage[uid] = {
+                    "calls_last_30d": 0,
+                    "calls_all_time": 0,
+                    "total_tokens": 0,
+                }
+            
+            user_usage[uid]["calls_all_time"] += 1
+            created_at = log.get("created_at") or ""
+            if created_at >= thirty_days_ago:
+                user_usage[uid]["calls_last_30d"] += 1
+            
+            tokens = (log.get("input_tokens") or 0) + (log.get("output_tokens") or 0)
+            user_usage[uid]["total_tokens"] += tokens
+
+        # Enrich profiles with usage and storage
+        enriched_users = []
+        tot_calls_30d = 0
+        tot_calls_all = 0
+        tot_tokens = 0
+        tot_storage = 0
+
+        for p in profiles:
+            uid = p["id"]
+            u_metrics = user_usage.get(uid, {"calls_last_30d": 0, "calls_all_time": 0, "total_tokens": 0})
+            storage_bytes = _compute_user_storage_bytes(admin, uid)
+
+            tot_calls_30d += u_metrics["calls_last_30d"]
+            tot_calls_all += u_metrics["calls_all_time"]
+            tot_tokens += u_metrics["total_tokens"]
+            tot_storage += storage_bytes
+
+            is_admin = p.get("role") == "admin" or (ADMIN_EMAIL and p.get("email") == ADMIN_EMAIL)
+
+            enriched_users.append({
+                "user_id": uid,
+                "email": p.get("email", ""),
+                "name": p.get("name") or p.get("email", "").split("@")[0],
+                "role": p.get("role", "user"),
+                "is_admin": is_admin,
+                "calls_last_30d": u_metrics["calls_last_30d"],
+                "calls_all_time": u_metrics["calls_all_time"],
+                "total_tokens": u_metrics["total_tokens"],
+                "storage_bytes": storage_bytes
+            })
+
+        return {
+            "summary": {
+                "total_calls_30d": tot_calls_30d,
+                "total_calls_all_time": tot_calls_all,
+                "total_tokens": tot_tokens,
+                "total_storage_bytes": tot_storage
+            },
+            "users": enriched_users
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to fetch usage analytics: {str(e)}")
 
 @app.post("/api/admin/invite")
 async def direct_invite_user(payload: DirectInvitePayload, admin_user: dict = Depends(get_admin_user)):

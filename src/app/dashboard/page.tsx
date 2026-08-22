@@ -9,6 +9,7 @@ import { createClient } from '@/lib/supabase/client';
 import { fetchWithAuth } from '@/lib/api';
 import { useAuth } from '@/context/AuthContext';
 import TermsModal from '@/components/TermsModal';
+import ScoreTrend, { ScoreTrendItem } from '@/components/dashboard/ScoreTrend';
 import { 
   PlusCircle, 
   FileText, 
@@ -128,6 +129,22 @@ export default function DashboardPage() {
   const totalGenerated = applications.filter(a => a.generated_cvs && a.generated_cvs.length > 0).length;
   const totalSuggestions = applications.reduce((acc, curr) => acc + (curr.suggested_changes?.length || 0), 0);
 
+  // Chronologically ordered (oldest to newest) for left-to-right progression
+  const trendItems: ScoreTrendItem[] = [...applications]
+    .reverse()
+    .map((app) => ({
+      id: app.id,
+      company: app.company_name,
+      role: app.job_title,
+      label: app.company_name ? `${app.company_name} • ${app.job_title}` : app.job_title,
+      score: app.predicted_match_score ?? app.match_score ?? 70,
+      date: new Date(app.created_at).toLocaleDateString(undefined, {
+        month: 'short',
+        day: 'numeric',
+        year: 'numeric'
+      })
+    }));
+
   return (
     <div className="space-y-8">
       {/* Terms & Conditions Modal */}
@@ -183,6 +200,11 @@ export default function DashboardPage() {
           <p className="text-2xl sm:text-3xl font-bold text-slate-900 mt-2">{totalGenerated}</p>
         </div>
       </div>
+
+      {/* Real Application Score Trend Visualization */}
+      {!loading && !errorMsg && applications.length > 0 && (
+        <ScoreTrend items={trendItems} />
+      )}
 
       {/* Main List */}
       <div className="space-y-4">

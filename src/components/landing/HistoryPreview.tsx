@@ -1,8 +1,6 @@
 import React from 'react';
 import { BarChart3, Building2, Calendar, ArrowUpRight } from 'lucide-react';
 
-// TODO: This visualization component can be adapted in src/app/dashboard/page.tsx with live application state to show user progress over time.
-
 // Hardcoded static sample data for logged-out preview
 const SAMPLE_HISTORY = [
   {

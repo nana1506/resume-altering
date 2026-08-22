@@ -1,6 +1,7 @@
 import uuid
+from datetime import datetime, timezone
 from fastapi import FastAPI, HTTPException, Depends
-from api._shared.auth import setup_cors, get_current_user
+from api._shared.auth import setup_cors, get_current_user, ADMIN_EMAIL
 from api._shared.models import CreateApplicationRequest, UpdateChangeRequest
 from api.services.supabase_client import (
     get_supabase_admin,
@@ -89,9 +90,33 @@ async def generate_suggestions(
             cv_text = doc_res.data[0].get("parsed_text", "")
             parsed_structure = doc_res.data[0].get("parsed_structure")
             
-    if not cv_text and not parsed_structure:
-        raise HTTPException(status_code=400, detail="CV text could not be found for this application.")
-        
+    # Check if requesting user is admin (admins are strictly exempt from rate limits)
+    is_admin = False
+    try:
+        prof_res = admin.table("profiles").select("role, email").eq("id", user_id).execute()
+        if prof_res.data and prof_res.data[0].get("role") == "admin":
+            is_admin = True
+        elif ADMIN_EMAIL and current_user.get("email") == ADMIN_EMAIL:
+            is_admin = True
+    except Exception:
+        pass
+
+    # Rate limit check: only non-admin users are restricted to 5 suggestion calls per day (UTC)
+    if not is_admin:
+        today_utc_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
+        try:
+            usage_res = admin.table("gemini_usage_log").select("id", count="exact").eq("user_id", user_id).gte("created_at", today_utc_start).execute()
+            usage_count = usage_res.count if usage_res.count is not None else len(usage_res.data or [])
+            if usage_count >= 5:
+                raise HTTPException(
+                    status_code=429,
+                    detail="Daily limit reached (5 CV generations per day). Try again tomorrow."
+                )
+        except HTTPException:
+            raise
+        except Exception as e:
+            print(f"Warning: Failed to check Gemini usage count: {e}")
+
     # Prepare structured representation for high-fidelity LLM prompt
     if parsed_structure:
         try:
@@ -103,12 +128,14 @@ async def generate_suggestions(
         structured_obj = structure_cv_text(cv_text)
         formatted_cv_prompt_text = cv_to_plain_text(structured_obj)
 
-    # Generate structured analysis via Gemini
+    # Generate structured analysis via Gemini (records tokens to gemini_usage_log for both admin and non-admin)
     try:
         analysis = generate_cv_suggestions(
             cv_text=formatted_cv_prompt_text,
             job_title=job_title,
-            job_description=job_description
+            job_description=job_description,
+            user_id=user_id,
+            application_id=application_id
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"AI Suggestion generation failed: {str(e)}")

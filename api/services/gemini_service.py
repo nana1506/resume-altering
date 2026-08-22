@@ -93,10 +93,40 @@ def fallback_keyword_extractor(cv_text: str, job_title: str, job_description: st
         
     return extracted
 
-def generate_cv_suggestions(cv_text: str, job_title: str, job_description: str) -> GeminiAnalysisResponse:
+def log_gemini_usage(
+    user_id: Optional[str],
+    application_id: Optional[str],
+    input_tokens: Optional[int],
+    output_tokens: Optional[int],
+    model_used: str
+):
+    """Helper to record Gemini API call metadata to the gemini_usage_log database table."""
+    if not user_id:
+        return
+    try:
+        from api.services.supabase_client import get_supabase_admin
+        admin = get_supabase_admin()
+        admin.table("gemini_usage_log").insert({
+            "user_id": user_id,
+            "application_id": application_id,
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+            "model_used": model_used
+        }).execute()
+    except Exception as log_err:
+        print(f"Warning: Failed to log Gemini usage to database: {log_err}")
+
+def generate_cv_suggestions(
+    cv_text: str,
+    job_title: str,
+    job_description: str,
+    user_id: Optional[str] = None,
+    application_id: Optional[str] = None
+) -> GeminiAnalysisResponse:
     """
     Calls Google Gemini to analyze ATS match score, extract vacancy keywords with presence status,
     and generate precise section-by-section bullet improvements.
+    Logs token consumption and model metadata to gemini_usage_log.
     """
     api_key = os.getenv("GEMINI_API_KEY")
     if not api_key:
@@ -190,6 +220,21 @@ You MUST return ONLY valid JSON matching this schema:
             # Guarantee non-empty keywords
             if not parsed.keywords or len(parsed.keywords) < 3:
                 parsed.keywords = fallback_keyword_extractor(cv_text, job_title, job_description)
+            
+            # Extract token counts from Gemini response metadata
+            prompt_tokens = None
+            candidates_tokens = None
+            if hasattr(response, "usage_metadata") and response.usage_metadata:
+                prompt_tokens = getattr(response.usage_metadata, "prompt_token_count", None)
+                candidates_tokens = getattr(response.usage_metadata, "candidates_token_count", None)
+
+            log_gemini_usage(
+                user_id=user_id,
+                application_id=application_id,
+                input_tokens=prompt_tokens,
+                output_tokens=candidates_tokens,
+                model_used=model_name
+            )
                 
             return parsed
         except Exception as err:
@@ -211,9 +256,32 @@ You MUST return ONLY valid JSON matching this schema:
         
         if not parsed.keywords or len(parsed.keywords) < 3:
             parsed.keywords = fallback_keyword_extractor(cv_text, job_title, job_description)
+
+        prompt_tokens = None
+        candidates_tokens = None
+        if hasattr(response, "usage_metadata") and response.usage_metadata:
+            prompt_tokens = getattr(response.usage_metadata, "prompt_token_count", None)
+            candidates_tokens = getattr(response.usage_metadata, "candidates_token_count", None)
+
+        log_gemini_usage(
+            user_id=user_id,
+            application_id=application_id,
+            input_tokens=prompt_tokens,
+            output_tokens=candidates_tokens,
+            model_used="gemini-2.5-flash"
+        )
             
         return parsed
     except Exception as retry_err:
         last_error = retry_err
+
+    # If call fails after all attempts, log the failed attempt with null token counts
+    log_gemini_usage(
+        user_id=user_id,
+        application_id=application_id,
+        input_tokens=None,
+        output_tokens=None,
+        model_used="failed_attempt"
+    )
 
     raise RuntimeError(f"Failed to generate and parse Gemini CV suggestions: {str(last_error)}")

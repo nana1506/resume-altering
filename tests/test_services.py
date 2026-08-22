@@ -11,7 +11,8 @@ from api.services.parser import (
     CVEntry,
     structure_cv_text,
     cv_to_plain_text,
-    clean_text
+    clean_text,
+    parse_skill_line
 )
 from api.services.pdf_generator import (
     generate_tailored_pdf,
@@ -24,6 +25,57 @@ from api.services.gemini_service import (
     clean_json_string,
     fallback_keyword_extractor
 )
+
+def test_line_wrap_continuation_merging():
+    print("Testing Line-Wrap Continuation Merging (Fix 1)...")
+    wrapped_cv_text = """John Doe
+Senior Data Analyst
+john.doe@example.com | (555) 987-6543 | Chicago, IL | linkedin.com/in/johndoe
+
+PROFILE SUMMARY
+Results-oriented Data Analyst with 5+ years of experience transforming complex datasets into
+actionable business intelligence dashboards and predictive models across multi-cloud environments.
+
+WORK EXPERIENCE
+Lead Data Analyst at Globex Corp (2020 - Present)
+• Built scalable ETL pipelines using Python and Apache Spark,
+reducing nightly batch processing times by 45% across all regional hubs.
+• Collaborated with executive leadership to design automated KPI reports
+in Tableau and Power BI, driving a 15% increase in operational efficiency.
+
+SKILLS & TECHNOLOGIES
+Technical Skills: SQL, Python, R, Bash, Git, Docker
+BI & Visualization: Tableau, Power BI, Looker Studio, Metabase
+Cloud & Databases: AWS Redshift, Snowflake, PostgreSQL, BigQuery
+
+EDUCATION
+B.S. in Statistics - University of Illinois (2015 - 2019)
+"""
+    parsed = structure_cv_text(wrapped_cv_text)
+    
+    # 1. Check Profile Summary merged into 1 continuous paragraph
+    summary_sec = next(s for s in parsed.sections if s.name == "Profile Summary")
+    assert len(summary_sec.entries) == 1, f"Expected 1 merged summary paragraph, got {len(summary_sec.entries)}"
+    assert "transforming complex datasets into actionable business intelligence" in summary_sec.entries[0].text
+    
+    # 2. Check Work Experience bullets merged into 2 continuous bullets
+    exp_sec = next(s for s in parsed.sections if s.name == "Work Experience")
+    bullets = [e for e in exp_sec.entries if e.type == "bullet"]
+    assert len(bullets) == 2, f"Expected 2 merged bullets, got {len(bullets)}"
+    assert "Apache Spark, reducing nightly batch processing times" in bullets[0].text
+    assert "automated KPI reports in Tableau" in bullets[1].text
+    
+    # 3. Check Skills & Technologies parsed as 3 distinct skill_line entries
+    skills_sec = next(s for s in parsed.sections if s.name == "Skills & Technologies")
+    assert len(skills_sec.entries) == 3, f"Expected 3 skill category entries, got {len(skills_sec.entries)}"
+    assert skills_sec.entries[0].type == "skill_line"
+    assert skills_sec.entries[0].label == "Technical Skills"
+    assert "Python" in skills_sec.entries[0].text
+    assert skills_sec.entries[1].type == "skill_line"
+    assert skills_sec.entries[1].label == "BI & Visualization"
+    assert skills_sec.entries[2].type == "skill_line"
+    assert skills_sec.entries[2].label == "Cloud & Databases"
+    print("Line-wrap continuation merging validated successfully!")
 
 def test_cv_structuring():
     print("Testing Structured CV Parsing...")
@@ -91,7 +143,7 @@ def test_apply_changes_to_cv():
             CVSection(
                 name="Skills & Technologies",
                 entries=[
-                    CVEntry(type="bullet", text="Python, SQL, Git")
+                    CVEntry(type="skill_line", label="Languages", text="Python, SQL, Git")
                 ]
             )
         ]
@@ -159,29 +211,30 @@ def test_template_reordering():
     print("Canonical template reordering verified successfully!")
 
 def test_pdf_generation():
-    print("Testing Structured PDF Generation...")
+    print("Testing Structured PDF Generation with Justified Bullets and Skill Lines...")
     sample_cv = structure_cv_text("""
 Alex Morgan
 Senior Cloud Engineer
 alex.morgan@example.com | (555) 123-4567 | San Francisco, CA | linkedin.com/in/alexmorgan
 
 SUMMARY
-Experienced software engineer with 5 years of background in building web apps.
+Experienced software engineer with 5 years of background in building high-scale web applications.
 
 EXPERIENCE
 Software Engineer at Acme Corp (2021 - Present)
-• Built user interfaces using React and TypeScript.
-• Maintained legacy backend endpoints.
+• Built user interfaces using React and TypeScript, improving customer checkout conversion by 18%.
+• Maintained legacy backend endpoints in Python and FastAPI.
 
 SKILLS
-Python, FastAPI, Supabase, PostgreSQL, Next.js, Docker
+Technical Skills: Python, FastAPI, Supabase, PostgreSQL, Next.js, Docker
+Cloud Infrastructure: AWS, GCP, Terraform, Kubernetes, CI/CD
 """)
 
     sample_changes = [
         {
             "section": "SUMMARY",
             "entry_index": 0,
-            "original_text": "Experienced software engineer with 5 years of background in building web apps.",
+            "original_text": "Experienced software engineer with 5 years of background in building high-scale web applications.",
             "suggested_text": "Results-driven Senior Full-Stack Engineer with 5+ years of experience designing scalable microservices.",
             "reason": "Aligns with Senior role",
             "checked": True
@@ -255,6 +308,7 @@ def test_fallback_keyword_extractor():
     print(f"Extracted {len(extracted)} keywords reliably: {terms}")
 
 if __name__ == "__main__":
+    test_line_wrap_continuation_merging()
     test_cv_structuring()
     test_apply_changes_to_cv()
     test_template_reordering()

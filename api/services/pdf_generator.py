@@ -29,7 +29,7 @@ def apply_changes_to_cv(cv: ParsedCV, changes: List[Dict[str, Any]]) -> ParsedCV
     updated_sections: List[CVSection] = [
         CVSection(
             name=sec.name,
-            entries=[CVEntry(type=e.type, text=e.text) for e in sec.entries]
+            entries=[CVEntry(type=e.type, text=e.text, label=e.label) for e in sec.entries]
         )
         for sec in cv.sections
     ]
@@ -141,7 +141,7 @@ def format_subheading_text(text: str) -> str:
 
 def build_pdf_from_cv(parsed_cv: ParsedCV, template_mode: str = "input") -> bytes:
     """
-    Part 3: Renders an ATS-friendly, beautifully aligned PDF from a structured ParsedCV model.
+    Renders an ATS-friendly, beautifully aligned PDF from a structured ParsedCV model.
     """
     from reportlab.lib.pagesizes import letter
     from reportlab.lib import colors
@@ -182,6 +182,7 @@ def build_pdf_from_cv(parsed_cv: ParsedCV, template_mode: str = "input") -> byte
     SPACE_SUBHEADING_BEFORE = 4
     SPACE_SUBHEADING_AFTER = 1.5
     SPACE_BULLET_AFTER = 2.5
+    SPACE_SKILL_AFTER = 2.5
     SPACE_PARAGRAPH_AFTER = 3.5
 
     # 1. Header Block Styles
@@ -243,6 +244,7 @@ def build_pdf_from_cv(parsed_cv: ParsedCV, template_mode: str = "input") -> byte
         keepWithNext=True
     )
 
+    # Fix 2: Justified bullet alignment for clean right edge
     bullet_style = ParagraphStyle(
         'CVBullet',
         parent=styles['Normal'],
@@ -252,7 +254,22 @@ def build_pdf_from_cv(parsed_cv: ParsedCV, template_mode: str = "input") -> byte
         textColor=text_color,
         leftIndent=12,
         firstLineIndent=-8,
+        alignment=TA_JUSTIFY,
         spaceAfter=SPACE_BULLET_AFTER
+    )
+
+    # Fix 3: Clean, hanging-indent style for Skill lines
+    skill_line_style = ParagraphStyle(
+        'CVSkillLine',
+        parent=styles['Normal'],
+        fontName='Helvetica',
+        fontSize=8.8,
+        leading=12,
+        textColor=text_color,
+        leftIndent=12,
+        firstLineIndent=-12,
+        alignment=TA_JUSTIFY,
+        spaceAfter=SPACE_SKILL_AFTER
     )
 
     paragraph_style = ParagraphStyle(
@@ -290,10 +307,13 @@ def build_pdf_from_cv(parsed_cv: ParsedCV, template_mode: str = "input") -> byte
 
         for entry in section.entries:
             clean_text_content = entry.text.strip()
-            if not clean_text_content:
+            if not clean_text_content and not entry.label:
                 continue
 
-            if entry.type == "bullet":
+            if entry.type == "skill_line":
+                label_part = f"<b>{escape_xml(entry.label)}:</b> " if entry.label else ""
+                story.append(Paragraph(f"{label_part}{escape_xml(clean_text_content)}", skill_line_style))
+            elif entry.type == "bullet":
                 story.append(Paragraph(f"&bull; {escape_xml(clean_text_content)}", bullet_style))
             elif entry.type == "subheading":
                 story.append(Paragraph(format_subheading_text(clean_text_content), subheading_style))

@@ -4,11 +4,12 @@ from typing import List, Literal, Optional, Tuple, Dict, Any
 from pydantic import BaseModel, Field
 
 class CVEntry(BaseModel):
-    type: Literal["bullet", "paragraph", "subheading"]
+    type: Literal["bullet", "paragraph", "subheading", "skill_line"]
     text: str
+    label: Optional[str] = None
 
 class CVSection(BaseModel):
-    name: str  # e.g. "Profile Summary", "Work Experience", "Skills", "Education"
+    name: str  # e.g. "Profile Summary", "Work Experience", "Skills & Technologies", "Education"
     entries: List[CVEntry] = Field(default_factory=list)
 
 class ParsedCV(BaseModel):
@@ -111,7 +112,6 @@ def parse_docx(file_bytes: bytes) -> str:
     for table in doc.tables:
         for row in table.rows:
             row_cells = [cell.text.strip() for cell in row.cells if cell.text.strip()]
-            # Deduplicate contiguous identical cells in merged columns
             unique_cells = []
             for c in row_cells:
                 if not unique_cells or unique_cells[-1] != c:
@@ -121,7 +121,6 @@ def parse_docx(file_bytes: bytes) -> str:
 
     all_chunks = para_chunks
     if table_chunks:
-        # Check if table chunks are already present in paragraphs
         para_blob = "\n".join(para_chunks)
         new_table_chunks = [t for t in table_chunks if t not in para_blob]
         if new_table_chunks:
@@ -186,9 +185,57 @@ def is_date_or_subheading(line: str) -> bool:
 
     return False
 
+def parse_skill_line(line: str) -> Optional[Tuple[str, str]]:
+    """
+    Checks if a line in a Skills section matches a category label + items pattern.
+    Returns (label, values) or None.
+    """
+    clean = line.strip()
+    if not clean:
+        return None
+
+    # Strip bullet marker if present
+    bullet_prefix = re.match(r'^[•\-\*▪▫–—\u2022\u25cf\u25cb\u25aa\u25ab]\s*', clean)
+    if bullet_prefix:
+        clean = clean[bullet_prefix.end():].strip()
+
+    # 1. Pattern: "Category Label: Item1, Item2, Item3" or "Category Label | Item1, Item2" or "Category Label – Item1..."
+    sep_match = re.match(r'^([A-Za-z0-9\s&/\(\)\+]{2,35}?)\s*[:|–—]\s*(.+)$', clean)
+    if sep_match:
+        label = sep_match.group(1).strip()
+        values = sep_match.group(2).strip()
+        if len(label.split()) <= 5 and not label.endswith('.'):
+            return label, values
+
+    # 2. Pattern: "Technical Skills · Python · SQL · React"
+    dot_match = re.match(r'^([A-Za-z0-9\s&/\(\)\+]{2,30}?)\s*[·•▪]\s*(.+)$', clean)
+    if dot_match:
+        label = dot_match.group(1).strip()
+        values = dot_match.group(2).strip()
+        if len(label.split()) <= 4:
+            return label, values
+
+    # 3. Known category keywords at start of line
+    known_skill_prefixes = [
+        "technical skills", "hard skills", "soft skills", "core competencies",
+        "key skills", "programming languages", "languages", "frameworks",
+        "tools & technologies", "tools", "databases", "cloud & devops",
+        "bi & visualization", "visualization", "methodologies", "analytics",
+        "certifications", "domain knowledge", "professional skills"
+    ]
+    lower = clean.lower()
+    for prefix in known_skill_prefixes:
+        if lower.startswith(prefix) and len(clean) > len(prefix) + 2:
+            remainder = clean[len(prefix):].lstrip(" :|–—·•-").strip()
+            if remainder:
+                return clean[:len(prefix)].strip(), remainder
+
+    return None
+
 def structure_cv_text(plain_text: str) -> ParsedCV:
     """
     Transforms extracted CV text into a clean, structured ParsedCV model.
+    Merges line-wrapped continuation lines and categorizes skills entries cleanly.
     """
     lines = [l.strip() for l in plain_text.strip().split("\n") if l.strip()]
     if not lines:
@@ -248,7 +295,48 @@ def structure_cv_text(plain_text: str) -> ParsedCV:
             current_section = CVSection(name="Profile Summary", entries=[])
             sections.append(current_section)
 
-        # Check entry type
+        is_skills_sec = any(
+            kw in current_section.name.lower()
+            for kw in ["skill", "technolog", "competenc", "tool"]
+        )
+
+        # Fix 1 & Fix 3: Check for Skill Category Line
+        if is_skills_sec:
+            skill_parsed = parse_skill_line(line)
+            if skill_parsed:
+                lbl, val = skill_parsed
+                current_section.entries.append(CVEntry(type="skill_line", label=lbl, text=val))
+                idx += 1
+                continue
+
+        # Fix 1: Check if this line is a continuation of the previous entry
+        if current_section.entries:
+            prev_entry = current_section.entries[-1]
+            prev_text = prev_entry.text.strip()
+            
+            # Sentence terminal check
+            is_terminal = prev_text.endswith(('.', '!', '?', ':'))
+            is_new_bullet = bool(bullet_regex.match(line))
+            is_new_section = bool(is_section_header(line))
+            is_subhead = is_date_or_subheading(line)
+            is_skill_line = is_skills_sec and bool(parse_skill_line(line))
+
+            # If previous line was cut off mid-sentence and this is not a distinct new item
+            if (
+                not is_terminal
+                and not is_new_bullet
+                and not is_new_section
+                and not is_subhead
+                and not is_skill_line
+                and prev_entry.type in ("bullet", "paragraph", "skill_line")
+            ):
+                # Clean merge into previous entry
+                merged_text = f"{prev_text} {line}".strip()
+                prev_entry.text = re.sub(r'\s+', ' ', merged_text)
+                idx += 1
+                continue
+
+        # Check standard entry types
         if bullet_regex.match(line):
             clean_bullet = bullet_regex.sub('', line).strip()
             if clean_bullet:
@@ -258,7 +346,7 @@ def structure_cv_text(plain_text: str) -> ParsedCV:
         elif len(line) < 80 and not line.endswith(".") and ("experience" in current_section.name.lower() or "education" in current_section.name.lower()) and idx + 1 < len(lines) and bullet_regex.match(lines[idx + 1]):
             current_section.entries.append(CVEntry(type="subheading", text=line))
         else:
-            # Paragraph entry (e.g. summary or inline skill line)
+            # Paragraph entry (e.g. summary or inline text)
             current_section.entries.append(CVEntry(type="paragraph", text=line))
 
         idx += 1
@@ -285,7 +373,10 @@ def cv_to_plain_text(cv: ParsedCV) -> str:
     for sec in cv.sections:
         chunks.append(f"\n[{sec.name.upper()}]")
         for idx, entry in enumerate(sec.entries):
-            if entry.type == "bullet":
+            if entry.type == "skill_line":
+                label_str = f"{entry.label}: " if entry.label else ""
+                chunks.append(f"  • [entry {idx}]: {label_str}{entry.text}")
+            elif entry.type == "bullet":
                 chunks.append(f"  • [entry {idx}]: {entry.text}")
             elif entry.type == "subheading":
                 chunks.append(f"  ### [entry {idx}]: {entry.text}")

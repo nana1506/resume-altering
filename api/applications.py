@@ -318,13 +318,21 @@ async def generate_cv(
         raise HTTPException(status_code=500, detail=f"Database insertion failed: {str(e)}")
         
     try:
+        # Preview URL (inline display in iframe without triggering auto-download)
+        preview_url = create_signed_download_url("generated", storage_path, expires_in=3600)
+    except Exception:
+        preview_url = ""
+
+    try:
+        # Download URL (triggers download with custom filename when clicked)
         download_url = create_signed_download_url("generated", storage_path, expires_in=3600, download_filename=gen_filename)
     except Exception:
-        download_url = ""
+        download_url = preview_url
         
     return {
         "generated_cv_id": gen_id,
         "storage_path": storage_path,
+        "preview_url": preview_url,
         "download_url": download_url,
         "filename": gen_filename
     }
@@ -385,6 +393,13 @@ async def get_application_details(
         try:
             path_file = gen.get("storage_path", "").split("/")[-1]
             gen["filename"] = path_file
+            # Preview URL for iframe (inline display without triggering browser download)
+            gen["preview_url"] = create_signed_download_url(
+                "generated",
+                gen["storage_path"],
+                expires_in=3600
+            )
+            # Download URL for download button
             gen["download_url"] = create_signed_download_url(
                 "generated",
                 gen["storage_path"],
@@ -392,6 +407,7 @@ async def get_application_details(
                 download_filename=path_file
             )
         except Exception:
+            gen["preview_url"] = None
             gen["download_url"] = None
 
     return {

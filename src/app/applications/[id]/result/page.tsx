@@ -21,6 +21,7 @@ import {
 interface GeneratedCV {
   id: string;
   storage_path: string;
+  preview_url?: string;
   download_url: string;
   filename?: string;
   created_at: string;
@@ -129,9 +130,9 @@ export default function ResultPage() {
           {/* PDF Preview Container */}
           <div className="lg:col-span-2 glass-card rounded-3xl p-4 overflow-hidden border border-slate-200 shadow-md">
             <div className="bg-slate-100 rounded-2xl overflow-hidden h-[680px] flex items-center justify-center relative border border-slate-200">
-              {latestCV?.download_url ? (
+              {latestCV?.preview_url || latestCV?.download_url ? (
                 <iframe
-                  src={`${latestCV.download_url}#toolbar=0&navpanes=0`}
+                  src={`${latestCV.preview_url || latestCV.download_url}#toolbar=0&navpanes=0`}
                   title="Tailored CV PDF Preview"
                   className="w-full h-full border-0 rounded-2xl"
                 />
